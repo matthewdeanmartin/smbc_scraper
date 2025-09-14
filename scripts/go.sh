@@ -27,7 +27,7 @@ echo ""
 # Downloads HTML and images to the 'data/' directory.
 #
 echo "--- Running Ground-Truth Scraper for 2024 ---"
-smbc-scrape --log-level "$LOG_LEVEL" --max-rate 2 smbc --start-id 1 --end-id 7645
+# smbc-scrape --log-level "$LOG_LEVEL" --max-rate 2 smbc --start-id 1 --end-id 7645
 
 
 # ---
@@ -44,7 +44,7 @@ smbc-scrape --log-level "$LOG_LEVEL" wiki --start-id 1 --end-id 7645
 # Note: This is faster as it doesn't download images.
 #
 echo "--- Running Oh No Robot Scraper ---"
-smbc-scrape --log-level "$LOG_LEVEL" ohnorobot --limit 7645
+# smbc-scrape --log-level "$LOG_LEVEL" ohnorobot --limit 7645
 
 # ==============================================================================
 

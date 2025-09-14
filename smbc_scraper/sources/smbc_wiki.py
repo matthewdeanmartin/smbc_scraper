@@ -81,7 +81,7 @@ class SmbcWikiScraper:
         return None
 
     async def _fetch_and_parse_page(
-        self, page_title_or_id: str, original_id: int, redirect_depth: int = 0
+            self, page_title_or_id: str, original_id: int, redirect_depth: int = 0
     ) -> Optional[ComicRow]:
         """
         Fetches a wiki page by title/ID, handles redirects, and parses the content.
@@ -183,7 +183,8 @@ class SmbcWikiScraper:
                 async with sem:
                     return await fn(*a, **kw)
 
-            scrape_tasks = [bounded(self._fetch_and_parse_page, original_id=comic_id) for comic_id in ids_to_scrape]
+            scrape_tasks = [bounded(self._fetch_and_parse_page, page_title_or_id=str(comic_id), original_id=comic_id)
+                            for comic_id in ids_to_scrape]
             # scrape_tasks = [
             #     self._fetch_and_parse_page(str(comic_id), original_id=comic_id)
             #     for comic_id in ids_to_scrape
