@@ -14,6 +14,12 @@ from smbc_scraper.core.http import HttpClient
 from smbc_scraper.core.logging import setup_logging
 from smbc_scraper.export import save_comics
 from smbc_scraper.sources.ohnorobot import OhNoRobotScraper
+from smbc_scraper.sources.openrouter_vision import (
+    DEFAULT_OPENROUTER_MODEL,
+    OpenRouterVisionClient,
+    OpenRouterVisionScraper,
+    get_openrouter_api_key,
+)
 from smbc_scraper.sources.smbc import SmbcScraper
 from smbc_scraper.sources.smbc_wiki import SmbcWikiScraper
 
@@ -24,9 +30,9 @@ def valid_date(s: str) -> date:
     """Argparse type for validating YYYY-MM-DD date strings."""
     try:
         return datetime.strptime(s, "%Y-%m-%d").date()
-    except ValueError:
+    except ValueError as exc:
         msg = f"Not a valid date: '{s}'. Expected YYYY-MM-DD."
-        raise argparse.ArgumentTypeError(msg)
+        raise argparse.ArgumentTypeError(msg) from exc
 
 
 async def run_smbc(args: argparse.Namespace):
@@ -49,7 +55,8 @@ async def run_ohnorobot(args: argparse.Namespace):
     http_client = HttpClient(cache_dir=str(args.cache_dir), rate_limit=args.max_rate)
     try:
         scraper = OhNoRobotScraper(http_client)
-        # The scraper now reads from the output_dir to find source CSVs and generates its own queries.
+        # The scraper reads the output_dir to find source CSVs and generate
+        # its own queries.
         results = await scraper.scrape(input_dir=args.output_dir, limit=args.limit)
         save_comics(results, args.output_dir, "ohnorobot")
     finally:
@@ -66,6 +73,32 @@ async def run_wiki(args: argparse.Namespace):
         save_comics(results, args.output_dir, "smbc_wiki")
     finally:
         await http_client.close()
+
+
+async def run_ocr(args: argparse.Namespace):
+    """Handler for the 'ocr' subcommand."""
+    console.print("[bold yellow]Starting cheap OCR via OpenRouter[/bold yellow]")
+    source_csv = args.source_csv or (args.output_dir / "smbc_ground_truth.csv")
+    client = OpenRouterVisionClient(
+        api_key=get_openrouter_api_key(),
+        model=args.model,
+        rate_limit=args.max_rate,
+    )
+    try:
+        scraper = OpenRouterVisionScraper(
+            client=client,
+            output_dir=args.output_dir,
+            data_dir=args.data_dir,
+            source_csv_path=source_csv,
+            output_name=args.output_name,
+        )
+        await scraper.scrape(
+            limit=args.limit,
+            overwrite=args.overwrite,
+            concurrency=args.concurrency,
+        )
+    finally:
+        await client.close()
 
 
 def main():
@@ -119,10 +152,16 @@ def main():
     smbc_parser.set_defaults(func=run_smbc)
 
     # Subcommand for ohnorobot.com
-    onr_parser = subparsers.add_parser("ohnorobot",
-                                       help="Scrape from ohnorobot.com by generating queries from existing data.")
-    onr_parser.add_argument("--limit", type=int, default=100,
-                            help="Number of comics from existing CSVs to use for generating search queries.")
+    onr_parser = subparsers.add_parser(
+        "ohnorobot",
+        help="Scrape from ohnorobot.com by generating queries from existing data.",
+    )
+    onr_parser.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="Number of comics from existing CSVs to use for generating queries.",
+    )
     onr_parser.set_defaults(func=run_ohnorobot)
 
     # Subcommand for smbc-wiki.com
@@ -137,10 +176,52 @@ def main():
     )
     wiki_parser.set_defaults(func=run_wiki)
 
+    # Subcommand for OpenRouter OCR + description
+    ocr_parser = subparsers.add_parser(
+        "ocr",
+        help="Use OpenRouter to OCR local comic images and generate descriptions.",
+    )
+    ocr_parser.add_argument(
+        "--source-csv",
+        type=Path,
+        default=None,
+        help="CSV file used to enrich OCR output with comic metadata.",
+    )
+    ocr_parser.add_argument(
+        "--model",
+        default=DEFAULT_OPENROUTER_MODEL,
+        help="OpenRouter multimodal model to use.",
+    )
+    ocr_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional limit on the number of images to analyze.",
+    )
+    ocr_parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Number of images to analyze concurrently.",
+    )
+    ocr_parser.add_argument(
+        "--output-name",
+        default="smbc_openrouter_vision",
+        help="Base filename for OCR exports inside the output directory.",
+    )
+    ocr_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Reprocess images even if they already exist in the output CSV.",
+    )
+    ocr_parser.set_defaults(func=run_ocr)
+
     args = parser.parse_args()
 
     if args.max_rate <= 0:
         parser.error("--max-rate must be > 0")
+    if getattr(args, "concurrency", 1) <= 0:
+        parser.error("--concurrency must be > 0")
 
     # Setup logging first
     setup_logging(args.log_level)

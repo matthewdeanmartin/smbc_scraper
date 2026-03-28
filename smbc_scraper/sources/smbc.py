@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import date
 from pathlib import Path
 from typing import List, Optional, Tuple
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from loguru import logger
 from rich.progress import Progress
@@ -25,10 +26,42 @@ class SmbcScraper:
     """
 
     BASE_URL = "https://www.smbc-comics.com"
+    IMAGE_DATE_RE = re.compile(
+        r"(?P<year>20\d{2})(?P<month>0[1-9]|1[0-2])(?P<day>0[1-9]|[12]\d|3[01])"
+    )
 
     def __init__(self, http_client: HttpClient, data_dir: str):
         self.client = http_client
         self.data_dir = Path(data_dir)
+
+    @staticmethod
+    def _extract_slug(url: str) -> str:
+        """Extract a slug from /comic/<slug> or legacy index.php?id=<id> URLs."""
+        parsed_url = urlparse(url)
+        path = parsed_url.path.rstrip("/")
+        if path and path != "/":
+            slug = path.split("/")[-1]
+            if slug and slug != "index.php":
+                return slug
+
+        query_params = parse_qs(parsed_url.query)
+        if comic_ids := query_params.get("id"):
+            return comic_ids[0]
+
+        return url.rstrip("/").rsplit("/", maxsplit=1)[-1]
+
+    @classmethod
+    def _infer_date_from_image_url(cls, image_url: str) -> Optional[date]:
+        """Infer a publication date from an image URL like /comics/20020905-2.gif."""
+        match = cls.IMAGE_DATE_RE.search(urlparse(image_url).path)
+        if not match:
+            return None
+
+        return date(
+            int(match.group("year")),
+            int(match.group("month")),
+            int(match.group("day")),
+        )
 
     async def _download_image(self, url: str, path: Path) -> bool:
         """Downloads a single image to the specified path."""
@@ -48,7 +81,8 @@ class SmbcScraper:
                 logger.error(f"Failed to write image {url} to {path}: {e}")
         else:
             logger.warning(
-                f"Failed to fetch image {url}. Status: {response.status_code if response else 'N/A'}"
+                "Failed to fetch image "
+                f"{url}. Status: {response.status_code if response else 'N/A'}"
             )
 
         return False
@@ -76,7 +110,8 @@ class SmbcScraper:
                     canonical_url = json_data["url"]
             except (json.JSONDecodeError, KeyError, ValueError) as e:
                 logger.warning(
-                    f"Could not fully parse JSON-LD for {url}. Will fallback. Error: {e}"
+                    f"Could not fully parse JSON-LD for {url}. "
+                    f"Will fallback. Error: {e}"
                 )
 
         # --- FALLBACK STRATEGY: Use canonical link and slug ---
@@ -85,20 +120,7 @@ class SmbcScraper:
             if canonical_url_node:
                 canonical_url = canonical_url_node.attributes.get("href", url)
 
-        slug = Path(canonical_url).stem
-
-        if not comic_date:  # If JSON-LD didn't provide a date
-            try:
-                comic_date = date.fromisoformat(slug)
-            except (ValueError, TypeError):
-                logger.warning(
-                    f"Could not parse date from slug '{slug}' or JSON-LD for URL {url}. Skipping."
-                )
-                return None, []
-
-        if not comic_date:  # Final check, should be unreachable
-            logger.error(f"Failed to determine a date for {url}. Skipping comic.")
-            return None, []
+        slug = self._extract_slug(canonical_url)
 
         page_title_node = tree.css_first("title")
 
@@ -118,7 +140,8 @@ class SmbcScraper:
 
         if not main_comic_node:
             logger.warning(
-                f"Main comic <img> not found for {url} using multiple selectors. Skipping."
+                "Main comic <img> not found for "
+                f"{url} using multiple selectors. Skipping."
             )
             return None, []
 
@@ -126,6 +149,24 @@ class SmbcScraper:
         hover_text = main_comic_node.attributes.get(
             "title", main_comic_node.attributes.get("alt")
         )
+        full_main_comic_url = (
+            urljoin(self.BASE_URL, main_comic_url) if main_comic_url else ""
+        )
+
+        if not comic_date:
+            try:
+                comic_date = date.fromisoformat(slug)
+            except (ValueError, TypeError):
+                comic_date = None
+
+        if not comic_date and full_main_comic_url:
+            comic_date = self._infer_date_from_image_url(full_main_comic_url)
+
+        if not comic_date:
+            logger.warning(
+                f"Could not infer a date for {url}; "
+                "preserving comic with an undated record."
+            )
 
         # 3. Find 'votey' bonus image and its text
         votey_node = tree.css_first("img#aftercomic")
@@ -150,14 +191,7 @@ class SmbcScraper:
 
         # 5. Prepare list of images to be downloaded
         images_to_download = []
-        if main_comic_url:
-            # FIX: Ensure main comic URL is absolute, handling both relative and absolute paths.
-            # if main_comic_url.startswith("http"):
-            #     full_main_comic_url = main_comic_url
-            # else:
-            #     full_main_comic_url = f"{self.BASE_URL}{main_comic_url}"
-            full_main_comic_url = urljoin(self.BASE_URL, main_comic_url)
-
+        if full_main_comic_url:
             main_image_path = get_image_path(
                 self.data_dir, row, full_main_comic_url, is_votey=False
             )
@@ -165,17 +199,7 @@ class SmbcScraper:
                 images_to_download.append((full_main_comic_url, main_image_path))
 
         if votey_url:
-            # Votey urls are sometimes absolute, sometimes relative
-            # if votey_url.startswith("http"):
-            #     full_votey_url = votey_url
-            # else:
-            #     full_votey_url = f"{self.BASE_URL}{votey_url}"
             full_votey_url = urljoin(self.BASE_URL, votey_url)
-            votey_image_path = get_image_path(
-                self.data_dir, row, full_votey_url, is_votey=True
-            )
-            if votey_image_path:
-                images_to_download.append((full_votey_url, votey_image_path))
             votey_image_path = get_image_path(
                 self.data_dir, row, full_votey_url, is_votey=True
             )
@@ -191,14 +215,16 @@ class SmbcScraper:
 
         if not response or response.status_code != 200:
             logger.warning(
-                f"Request failed for comic ID {comic_id}. URL: {url}. Status: {response.status_code if response else 'N/A'}"
+                f"Request failed for comic ID {comic_id}. URL: {url}. "
+                f"Status: {response.status_code if response else 'N/A'}"
             )
             return None
 
         # The response.url will be the final URL after any redirects
         final_url = str(response.url)
 
-        # Parse the final page content to get the comic_row with its canonical date and slug
+        # Parse the final page content to get the comic row with its canonical
+        # date and slug.
         comic_row, images_to_download = self._parse_page(final_url, response.text)
 
         if not comic_row:
@@ -213,7 +239,14 @@ class SmbcScraper:
         download_tasks = [
             self._download_image(img_url, path) for img_url, path in images_to_download
         ]
-        await asyncio.gather(*download_tasks)
+        if download_tasks:
+            download_results = await asyncio.gather(*download_tasks)
+            failed_downloads = sum(not result for result in download_results)
+            if failed_downloads:
+                logger.warning(
+                    f"Comic '{comic_row.slug}' completed with "
+                    f"{failed_downloads} failed image download(s)."
+                )
 
         return comic_row
 

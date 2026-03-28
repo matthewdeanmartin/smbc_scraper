@@ -21,6 +21,11 @@ It has a CLI, see [/scripts/go.sh](scripts/go.sh) for example usage.
 
 `that_github_repo.py` you have to run it directly
 
+For cheap OCR and image descriptions from saved comic images, set
+`OPENROUTER_API_KEY` and run:
+
+`uv run smbc-scrape ocr --data-dir data --output-dir out`
+
 ## Contributing
 
 Fork and MR and if you're lucky I'll respond in days.

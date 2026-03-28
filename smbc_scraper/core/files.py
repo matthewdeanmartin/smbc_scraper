@@ -18,12 +18,6 @@ def get_image_path(
     Constructs a structured path for saving a comic image.
     e.g., /base/images/2025/09/13/2025-09-13-main.png
     """
-    if not comic_row.date:
-        logger.warning(
-            f"Cannot determine image path for {comic_row.url} without a date."
-        )
-        return None
-
     try:
         parsed_url = urlparse(image_url)
         extension = Path(parsed_url.path).suffix
@@ -34,6 +28,13 @@ def get_image_path(
 
     suffix = "votey" if is_votey else "main"
     filename = f"{comic_row.slug}-{suffix}{extension}"
+
+    if not comic_row.date:
+        logger.warning(
+            "Cannot determine dated image path for "
+            f"{comic_row.url}; using misc fallback."
+        )
+        return base_dir / "images" / "misc" / filename
 
     # Structured path: data/images/YYYY/MM/DD/
     image_path = (

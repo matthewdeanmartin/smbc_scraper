@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import re
 from pathlib import Path
-from typing import List, Set, Optional
-from urllib.parse import urlparse, parse_qs, urlencode
+from typing import List, Optional, Set
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 import pandas as pd
 from loguru import logger
@@ -19,20 +18,38 @@ class OhNoRobotScraper:
     """Scrapes comic transcripts from ohnorobot.com search results."""
 
     BASE_URL = "https://www.ohnorobot.com/index.php"
+    SMBC_BASE_URL = "https://www.smbc-comics.com/"
 
     def __init__(self, http_client: HttpClient):
         self.client = http_client
 
-    def _get_id_from_url(self, url: str) -> Optional[str]:
-        """Extracts the SMBC comic ID from a URL's query string."""
+    def _normalize_smbc_url(self, url: str) -> str:
+        """Normalize search result links to absolute SMBC URLs."""
+        return urljoin(self.SMBC_BASE_URL, url)
+
+    def _get_identifier_from_url(self, url: str) -> Optional[str]:
+        """Extract the comic identifier from either a legacy or modern SMBC URL."""
         try:
-            parsed_url = urlparse(url)
+            parsed_url = urlparse(self._normalize_smbc_url(url))
             query_params = parse_qs(parsed_url.query)
-            if 'id' in query_params:
-                return query_params['id'][0]
+            if "id" in query_params and query_params["id"]:
+                return query_params["id"][0]
+
+            path = parsed_url.path.rstrip("/")
+            if path and path != "/":
+                slug = path.split("/")[-1]
+                if slug and slug != "index.php":
+                    return slug
         except Exception as e:
-            logger.warning(f"Could not parse ID from URL '{url}': {e}")
+            logger.warning(f"Could not parse comic identifier from URL '{url}': {e}")
         return None
+
+    @staticmethod
+    def _sort_key(row: ComicRow) -> tuple[int, str]:
+        """Sort numeric legacy IDs numerically and modern slugs lexicographically."""
+        if row.slug.isdigit():
+            return (0, f"{int(row.slug):010d}")
+        return (1, row.slug)
 
     def _parse_page(self, content: str) -> List[ComicRow]:
         """Parses a single page of search results from its HTML content."""
@@ -48,9 +65,13 @@ class OhNoRobotScraper:
             if not url:
                 continue
 
-            comic_id = self._get_id_from_url(url)
-            if not comic_id:
-                logger.debug(f"Skipping result with no parsable comic ID in URL: {url}")
+            normalized_url = self._normalize_smbc_url(url)
+            identifier = self._get_identifier_from_url(normalized_url)
+            if not identifier:
+                logger.debug(
+                    "Skipping result with no parsable comic identifier in URL: "
+                    f"{normalized_url}"
+                )
                 continue
 
             for selector in ["div.tinylink", "p"]:
@@ -61,8 +82,8 @@ class OhNoRobotScraper:
 
             results.append(
                 ComicRow(
-                    url=url,
-                    slug=f"smbc-id-{comic_id}",
+                    url=normalized_url,
+                    slug=identifier,
                     comic_text=comic_text,
                     source="ohnorobot",
                 )
@@ -88,7 +109,10 @@ class OhNoRobotScraper:
                     response = await self.client.get(full_url)
                     if not response or response.status_code != 200:
                         logger.warning(
-                            f"Failed to fetch page for query '{query}', page {page}. Status: {response.status_code if response else 'N/A'}")
+                            "Failed to fetch page for query "
+                            f"'{query}', page {page}. "
+                            f"Status: {response.status_code if response else 'N/A'}"
+                        )
                         break
 
                     page_results = self._parse_page(response.text)
@@ -99,7 +123,10 @@ class OhNoRobotScraper:
                     current_page_urls = {r.url for r in page_results}
                     if current_page_urls.issubset(seen_on_this_query):
                         logger.debug(
-                            f"Duplicate results for '{query}' on page {page}, likely end of results. Stopping.")
+                            "Duplicate results for "
+                            f"'{query}' on page {page}, likely end of results. "
+                            "Stopping."
+                        )
                         break
 
                     for comic in page_results:
@@ -109,13 +136,16 @@ class OhNoRobotScraper:
                     page += 1
                 progress.update(task, advance=1)
 
-        return sorted(list(all_comics.values()), key=lambda r: int(r.slug.split('-')[-1]))
+        return sorted(all_comics.values(), key=self._sort_key)
 
     async def scrape(self, input_dir: Path, limit: int) -> List[ComicRow]:
         """
         Generates search queries from existing CSV data and scrapes ohnorobot.com.
         """
-        logger.info(f"Starting OhNoRobot scrape, generating queries from files in '{input_dir}'")
+        logger.info(
+            "Starting OhNoRobot scrape, "
+            f"generating queries from files in '{input_dir}'"
+        )
 
         smbc_csv_path = input_dir / "smbc_ground_truth.csv"
         wiki_csv_path = input_dir / "smbc_wiki.csv"
@@ -131,26 +161,43 @@ class OhNoRobotScraper:
 
         if not dfs:
             logger.error(
-                f"No source CSV files found in '{input_dir}'. Cannot generate queries. Run 'smbc' or 'wiki' scrapers first.")
+                f"No source CSV files found in '{input_dir}'. "
+                "Cannot generate queries. Run 'smbc' or 'wiki' scrapers first."
+            )
             return []
 
-        combined_df = pd.concat(dfs).drop_duplicates(subset=['url']).sort_values('url').reset_index(drop=True)
+        combined_df = (
+            pd.concat(dfs)
+            .drop_duplicates(subset=["url"])
+            .sort_values("url")
+            .reset_index(drop=True)
+        )
 
         queries = set()
         rows_to_process = combined_df.head(limit)
 
         for _, row in rows_to_process.iterrows():
-            title = str(row.get('page_title', ''))
-            title = re.sub(r'Saturday Morning Breakfast Cereal -?', '', title, flags=re.IGNORECASE).strip()
-            title = re.sub(r'[^a-zA-Z0-9\s]', '', title).strip()
+            title = str(row.get("page_title", ""))
+            title = re.sub(
+                r"Saturday Morning Breakfast Cereal -?",
+                "",
+                title,
+                flags=re.IGNORECASE,
+            ).strip()
+            title = re.sub(r"[^a-zA-Z0-9\s]", "", title).strip()
             if title and (query := " ".join(title.split()[:3])):
                 queries.add(query)
 
         if not queries:
-            logger.warning("Could not generate any search queries from the input files.")
+            logger.warning(
+                "Could not generate any search queries from the input files."
+            )
             return []
 
-        logger.info(f"Generated {len(queries)} unique search queries from the first {len(rows_to_process)} comics.")
+        logger.info(
+            f"Generated {len(queries)} unique search queries "
+            f"from the first {len(rows_to_process)} comics."
+        )
 
-        return await self._run_queries(list(queries))
+        return await self._run_queries(sorted(queries))
 

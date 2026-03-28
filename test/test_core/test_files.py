@@ -4,6 +4,7 @@ import datetime
 from pathlib import Path
 
 import pytest
+
 from smbc_scraper.core.files import get_html_path, get_image_path
 from smbc_scraper.models import ComicRow
 
@@ -58,7 +59,8 @@ class TestGetImagePath:
         self, tmp_path: Path, comic_row_with_date: ComicRow
     ):
         """
-        Verifies correct path construction for a 'votey' image, checking for the '-votey' suffix.
+        Verifies correct path construction for a "votey" image, checking for
+        the "-votey" suffix.
         """
         image_url = "https://www.smbc-comics.com/comics/20250913-after.gif"
         expected_path = (
@@ -93,16 +95,18 @@ class TestGetImagePath:
         result_path = get_image_path(tmp_path, comic_row_with_date, image_url)
         assert result_path == expected_path
 
-    def test_get_image_path_returns_none_if_no_date(
+    def test_get_image_path_uses_misc_fallback_if_no_date(
         self, tmp_path: Path, comic_row_no_date: ComicRow
     ):
         """
-        Verifies that the function returns None when the ComicRow has no date,
-        as a structured path cannot be determined.
+        Verifies that the function falls back to a misc directory when the ComicRow
+        has no date.
         """
         image_url = "https://www.smbc-comics.com/comics/some-image.png"
         result_path = get_image_path(tmp_path, comic_row_no_date, image_url)
-        assert result_path is None
+        assert result_path == (
+            tmp_path / "images" / "misc" / "a-weird-slug-main.png"
+        )
 
 
 class TestGetHtmlPath:

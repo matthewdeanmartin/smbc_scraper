@@ -10,7 +10,6 @@ from hishel import AsyncCacheTransport, AsyncFileStorage, Controller
 from loguru import logger
 from tenacity import (
     AsyncRetrying,
-    RetryError,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
@@ -35,7 +34,7 @@ class RateLimiter:
 
 
 class HttpClient:
-    """A wrapper around httpx.AsyncClient providing caching, retries, and rate limiting."""
+    """HTTP wrapper with caching, retries, and rate limiting."""
 
     def __init__(
         self,
@@ -69,7 +68,8 @@ class HttpClient:
             headers={"User-Agent": user_agent},
         )
         logger.info(
-            f"HttpClient initialized. Rate limit: {rate_limit} req/s. Cache: {cache_dir}"
+            "HttpClient initialized. "
+            f"Rate limit: {rate_limit} req/s. Cache: {cache_dir}"
         )
 
     async def get(self, url: str) -> Optional[httpx.Response]:
@@ -89,11 +89,8 @@ class HttpClient:
                         response.raise_for_status()
 
                     return response
-        except RetryError as e:
-            logger.error(f"Failed to fetch {url} after multiple retries: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"An unexpected error occurred fetching {url}: {e}")
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to fetch {url}: {e}")
             return None
 
         return None  # Should be unreachable
