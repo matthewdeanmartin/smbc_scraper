@@ -1,0 +1,16 @@
+site_name: SMBC Scraper
+site_description: Documentation for the SMBC scraping workflows and data outputs.
+theme:
+  name: readthedocs
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Usage: usage.md
+  - Data layout: data-layout.md
+  - Contributing: contributing.md
+  - Prior art: PRIOR_ART.md
+  - Similar websites: similar-websites.md
+  - Source material: source-material.md
+markdown_extensions:
+  - admonition
+  - tables

@@ -1,59 +1,46 @@
 # smbc_scraper
-Collect raw data from smbc comics for noble causes, such as machine learning or creative side projects.
 
-You here for the data? See the [gold_data](gold_data) folder.
+Collect raw data from SMBC comics for noble causes, such as machine learning or
+creative side projects.
 
-## Major Data Sources
+You here for the data? See the [`gold_data`](gold_data) folder.
 
-- [SMBC-comics.com](https://www.smbc-comics.com)
-- [That Google Doc](https://docs.google.com/spreadsheets/d/1CH3NX_xKOx-VIPZqp5GkCTHdS7QDsmg7w9Q71Z-aRT0/edit?gid=0#gid=0)
-- [That Github Repo](https://github.com/fricklerhandwerk/smbc)
-- [That Wiki](https://www.smbc-wiki.com/)
-- [Ohnorobot](http://www.ohnorobot.com/index.php?comic=137)
+## Install
 
-## Installation
+Clone the repo and run `uv sync`. This is a repo-first tool, not a PyPI package.
 
-Git clone it. Run `uv sync`. This will never be a pypi package.
+## Use
 
-## Usage
+The CLI entrypoint is `uv run smbc-scrape`.
 
-It has a CLI, see [/scripts/go.sh](scripts/go.sh) for example usage.
+Common workflows:
 
-`that_github_repo.py` you have to run it directly
-
-For the official site, you can now:
-
-- scrape a fixed ID range:
+- Scrape a fixed ID range:
   `uv run smbc-scrape smbc --start-id 1 --end-id 7500`
-- scrape the full archive and download all images:
+- Scrape the full archive and download all images:
   `uv run smbc-scrape smbc-all`
-- incrementally fetch only new comics after a previous run:
+- Incrementally fetch only new comics:
   `uv run smbc-scrape smbc-update`
-  If there is no state file yet, it will discover the current legacy archive
-  boundary from the site, scrape a recent bootstrap window, and then save
-  `out\smbc_ground_truth_state.json` for later runs. You can still force a
-  manual bootstrap with `--start-id 7501`.
-  After the first successful run, `smbc-update` will reuse
-  `out\smbc_ground_truth_state.json`.
-- backfill missing local images from an existing metadata export:
+- Backfill missing images from `out\smbc_ground_truth.csv`:
   `uv run smbc-scrape smbc-images --output-dir out --data-dir data`
-  This only backfills images for comics already present in
-  `out\smbc_ground_truth.csv`.
+- OCR saved comic images with OpenRouter:
+  `uv run smbc-scrape ocr --data-dir data --output-dir out`
 
 Use `--max-rate` to stay polite with the site.
 
-There is also a `Makefile` with helper targets like `make smbc-all`,
-`make smbc-update`, and `make smbc-images`.
+See the docs for the full workflow:
 
-For cheap OCR and image descriptions from saved comic images, set
-`OPENROUTER_API_KEY` and run:
+- [`docs/installation.md`](docs/installation.md)
+- [`docs/usage.md`](docs/usage.md)
+- [`docs/data-layout.md`](docs/data-layout.md)
+- [`docs/contributing.md`](docs/contributing.md)
+- [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md)
+- [`docs/similar-websites.md`](docs/similar-websites.md)
+- [`docs/source-material.md`](docs/source-material.md)
 
-`uv run smbc-scrape ocr --data-dir data --output-dir out`
+`smbc_scraper\sources\that_github_repo.py` is still a direct-run helper rather
+than a CLI subcommand.
 
 ## Contributing
 
-Fork and MR and if you're lucky I'll respond in days.
-
-## Prior Art
-
-See [docs/PRIOR_ART.md](docs/PRIOR_ART.md)
+Fork it, send a change, and please run the checks before opening a PR.

@@ -5,8 +5,9 @@ MAX_RATE ?= 1.0
 OUTPUT_DIR ?= out
 DATA_DIR ?= data
 CACHE_DIR ?= .cache
+DOCS_FILES := README.md docs
 
-.PHONY: help sync test lint mypy smbc smbc-all smbc-update smbc-images wiki ohnorobot ocr
+.PHONY: help sync test lint mypy docs docs-build docs-serve format-md spellcheck smbc smbc-all smbc-update smbc-images wiki ohnorobot ocr
 
 help:
 	@echo "Targets:"
@@ -14,6 +15,10 @@ help:
 	@echo "  make test"
 	@echo "  make lint"
 	@echo "  make mypy"
+	@echo "  make docs-build"
+	@echo "  make docs-serve"
+	@echo "  make format-md"
+	@echo "  make spellcheck"
 	@echo "  make smbc START_ID=1 END_ID=7645"
 	@echo "  make smbc-all"
 	@echo "  make smbc-update [START_ID=7501] [BOOTSTRAP_LOOKBACK=50]"
@@ -33,6 +38,20 @@ lint:
 
 mypy:
 	uv run mypy smbc_scraper test
+
+docs: docs-build
+
+docs-build:
+	uv run mkdocs build --strict
+
+docs-serve:
+	uv run mkdocs serve
+
+format-md:
+	uv run mdformat $(DOCS_FILES)
+
+spellcheck:
+	uv run codespell README.md docs
 
 smbc:
 	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" smbc --start-id "$(START_ID)" --end-id "$(END_ID)"
