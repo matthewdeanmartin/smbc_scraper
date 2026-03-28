@@ -10,7 +10,7 @@ from loguru import logger
 from rich.progress import Progress
 from selectolax.parser import HTMLParser
 
-from smbc_scraper.core.http import HttpClient
+from smbc_scraper.core.http import HttpGetClient
 from smbc_scraper.models import ComicRow
 
 
@@ -20,7 +20,7 @@ class OhNoRobotScraper:
     BASE_URL = "https://www.ohnorobot.com/index.php"
     SMBC_BASE_URL = "https://www.smbc-comics.com/"
 
-    def __init__(self, http_client: HttpClient):
+    def __init__(self, http_client: HttpGetClient):
         self.client = http_client
 
     def _normalize_smbc_url(self, url: str) -> str:
@@ -120,7 +120,7 @@ class OhNoRobotScraper:
                         logger.debug(f"No more results for '{query}' on page {page}.")
                         break
 
-                    current_page_urls = {r.url for r in page_results}
+                    current_page_urls = {str(r.url) for r in page_results}
                     if current_page_urls.issubset(seen_on_this_query):
                         logger.debug(
                             "Duplicate results for "
@@ -130,9 +130,10 @@ class OhNoRobotScraper:
                         break
 
                     for comic in page_results:
-                        if comic.url not in all_comics:
-                            all_comics[comic.url] = comic
-                        seen_on_this_query.add(comic.url)
+                        comic_url = str(comic.url)
+                        if comic_url not in all_comics:
+                            all_comics[comic_url] = comic
+                        seen_on_this_query.add(comic_url)
                     page += 1
                 progress.update(task, advance=1)
 

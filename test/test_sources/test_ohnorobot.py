@@ -55,9 +55,10 @@ class TestOhNoRobotScraper:
         assert len(results) == 1
         assert str(results[0].url) == "https://www.smbc-comics.com/comic/astronomy"
         assert results[0].slug == "astronomy"
-        assert "First line" in results[0].comic_text
-        assert "Second line" in results[0].comic_text
-        assert "ignored summary" not in results[0].comic_text
+        comic_text = results[0].comic_text or ""
+        assert "First line" in comic_text
+        assert "Second line" in comic_text
+        assert "ignored summary" not in comic_text
 
     @pytest.mark.asyncio
     async def test_scrape_generates_queries_from_existing_csv_titles(

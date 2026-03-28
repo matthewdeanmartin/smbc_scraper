@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable
 
 import yaml
 from loguru import logger
@@ -10,9 +11,10 @@ from loguru import logger
 from smbc_scraper.export import save_comics
 from smbc_scraper.models import ComicRow
 
-
 FRONT_MATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-DATE_IN_URL_RE = re.compile(r"(?P<year>20\d{2})(?P<month>0[1-9]|1[0-2])(?P<day>[0-2][0-9]|3[01])")
+DATE_IN_URL_RE = re.compile(
+    r"(?P<year>20\d{2})(?P<month>0[1-9]|1[0-2])(?P<day>[0-2][0-9]|3[01])"
+)
 
 
 def _extract_front_matter(markdown_text: str) -> tuple[dict, str]:
@@ -38,20 +40,18 @@ def _extract_front_matter(markdown_text: str) -> tuple[dict, str]:
     return fm, body
 
 
-def _infer_date_from_front_matter(fm: dict) -> Optional["datetime.date"]:
+def _infer_date_from_front_matter(fm: dict) -> date | None:
     """Try to infer a date from common SMBC image URLs embedded in front matter.
 
     Looks for YYYYMMDD in the 'image' or 'extra_image' fields.
     """
-    import datetime as _dt
-
     for key in ("image", "extra_image"):
         val = fm.get(key)
         if isinstance(val, str):
             m = DATE_IN_URL_RE.search(val)
             if m:
                 try:
-                    return _dt.date(
+                    return date(
                         int(m.group("year")), int(m.group("month")), int(m.group("day"))
                     )
                 except ValueError:
@@ -84,8 +84,9 @@ def parse_markdown_file(path: Path) -> ComicRow:
       - hovertext -> hover_text
       - image/extra_image (used to infer date)
 
-    Any missing fields are left as None where optional. Required fields (url, slug, source)
-    are synthesized from the filename and known SMBC URL pattern.
+    Any missing fields are left as None where optional. Required fields
+    (`url`, `slug`, `source`) are synthesized from the filename and known
+    SMBC URL pattern.
     """
     text = path.read_text(encoding="utf-8")
     fm, body = _extract_front_matter(text)
@@ -121,14 +122,14 @@ def iter_markdown_files(root: Path) -> Iterable[Path]:
     yield from root.rglob("*.markdown")
 
 
-def load_rows_from_folder(folder: Path) -> List[ComicRow]:
+def load_rows_from_folder(folder: Path) -> list[ComicRow]:
     """Parse all markdown files in *folder* into ComicRow objects."""
     files = list(iter_markdown_files(folder))
     if not files:
         logger.warning(f"No markdown files found under {folder}")
         return []
 
-    rows: List[ComicRow] = []
+    rows: list[ComicRow] = []
     for fp in files:
         try:
             rows.append(parse_markdown_file(fp))
@@ -150,11 +151,16 @@ def run_export(input_dir: Path, out_dir: Path = Path("./out")) -> None:
         logger.warning("No rows parsed; nothing to export.")
         return
 
-    save_comics(rows=rows, output_dir=out_dir, source_name="local_md", formats=["csv", "xlsx"])  # parquet optional
+    save_comics(
+        rows=rows,
+        output_dir=out_dir,
+        source_name="local_md",
+        formats=["csv", "xlsx"],
+    )
 
 
 # Example usage (programmatic):
 # from pathlib import Path
 # from smbc_scraper.local_md_ingest import run_export
-if __name__ == '__main__':
+if __name__ == "__main__":
     run_export(Path("C:\\github\\smbc\\_comics"))

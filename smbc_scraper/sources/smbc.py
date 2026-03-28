@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -13,8 +14,56 @@ from rich.progress import Progress
 from selectolax.parser import HTMLParser
 
 from smbc_scraper.core.files import get_html_path, get_image_path
-from smbc_scraper.core.http import HttpClient
+from smbc_scraper.core.http import HttpGetClient
+from smbc_scraper.export import load_comics
 from smbc_scraper.models import ComicRow
+
+DEFAULT_INCREMENTAL_STATE_FILENAME = "smbc_ground_truth_state.json"
+
+
+@dataclass(frozen=True)
+class IncrementalScrapeState:
+    last_scraped_id: int
+
+
+def load_incremental_state(state_path: Path) -> Optional[IncrementalScrapeState]:
+    """Load incremental scrape state from disk if present."""
+    if not state_path.exists():
+        return None
+
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    last_scraped_id = payload.get("last_scraped_id")
+    if not isinstance(last_scraped_id, int) or last_scraped_id < 1:
+        msg = (
+            f"Invalid incremental state in {state_path}: "
+            f"expected positive integer last_scraped_id."
+        )
+        raise ValueError(msg)
+
+    return IncrementalScrapeState(last_scraped_id=last_scraped_id)
+
+
+def save_incremental_state(state_path: Path, state: IncrementalScrapeState) -> None:
+    """Persist the last successful legacy comic ID for future incremental runs."""
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps({"last_scraped_id": state.last_scraped_id}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def resolve_incremental_start_id(
+    state_path: Path,
+    start_id: Optional[int] = None,
+) -> tuple[int, Optional[IncrementalScrapeState]]:
+    """Resolve the next start ID from either an explicit override or saved state."""
+    state = load_incremental_state(state_path)
+    if start_id is not None:
+        return start_id, state
+    if state is None:
+        msg = "No incremental state file found."
+        raise ValueError(msg)
+    return state.last_scraped_id + 1, state
 
 
 class SmbcScraper:
@@ -30,7 +79,7 @@ class SmbcScraper:
         r"(?P<year>20\d{2})(?P<month>0[1-9]|1[0-2])(?P<day>0[1-9]|[12]\d|3[01])"
     )
 
-    def __init__(self, http_client: HttpClient, data_dir: str):
+    def __init__(self, http_client: HttpGetClient, data_dir: str):
         self.client = http_client
         self.data_dir = Path(data_dir)
 
@@ -87,7 +136,7 @@ class SmbcScraper:
 
         return False
 
-    def _parse_page(
+    def _parse_page(  # noqa: C901
         self, url: str, content: str
     ) -> Tuple[Optional[ComicRow], List[Tuple[str, Path]]]:
         """Parses the HTML of a single comic page to extract data and image URLs."""
@@ -118,7 +167,7 @@ class SmbcScraper:
         if canonical_url == url:  # If JSON-LD didn't provide a URL
             canonical_url_node = tree.css_first('link[rel="canonical"]')
             if canonical_url_node:
-                canonical_url = canonical_url_node.attributes.get("href", url)
+                canonical_url = canonical_url_node.attributes.get("href") or url
 
         slug = self._extract_slug(canonical_url)
 
@@ -250,6 +299,89 @@ class SmbcScraper:
 
         return comic_row
 
+    async def _get_row_for_legacy_id(self, comic_id: int) -> Optional[ComicRow]:
+        """Fetch and parse a legacy ID without writing files or downloading images."""
+        url = f"https://www.smbc-comics.com/index.php?db=comics&id={comic_id}"
+        response = await self.client.get(url)
+
+        if not response or response.status_code != 200:
+            logger.warning(
+                f"Probe request failed for comic ID {comic_id}. "
+                f"Status: {response.status_code if response else 'N/A'}"
+            )
+            return None
+
+        comic_row, _ = self._parse_page(str(response.url), response.text)
+        return comic_row
+
+    async def get_latest_comic_slug(self) -> str:
+        """Fetch the latest comic slug from the homepage."""
+        response = await self.client.get(self.BASE_URL)
+        if not response or response.status_code != 200:
+            msg = "Could not fetch the SMBC homepage to discover the latest comic."
+            raise RuntimeError(msg)
+
+        comic_row, _ = self._parse_page(str(response.url), response.text)
+        if not comic_row:
+            msg = "Could not parse the latest SMBC comic from the homepage."
+            raise RuntimeError(msg)
+
+        return comic_row.slug
+
+    async def discover_latest_legacy_id(
+        self, initial_probe_id: int = 8192, max_probe_id: int = 65536
+    ) -> int:
+        """Find the smallest legacy ID that resolves to the latest comic slug."""
+        if initial_probe_id < 1:
+            raise ValueError("initial_probe_id must be >= 1")
+        if max_probe_id < initial_probe_id:
+            raise ValueError("max_probe_id must be >= initial_probe_id")
+
+        latest_slug = await self.get_latest_comic_slug()
+        probe_cache: dict[int, Optional[str]] = {}
+
+        async def get_slug(probe_id: int) -> Optional[str]:
+            if probe_id not in probe_cache:
+                row = await self._get_row_for_legacy_id(probe_id)
+                probe_cache[probe_id] = row.slug if row else None
+            return probe_cache[probe_id]
+
+        upper = initial_probe_id
+        while True:
+            upper_slug = await get_slug(upper)
+            if upper_slug == latest_slug:
+                break
+            upper *= 2
+            if upper > max_probe_id:
+                msg = (
+                    "Could not discover the latest legacy SMBC ID within the "
+                    f"configured probe ceiling ({max_probe_id})."
+                )
+                raise RuntimeError(msg)
+
+        lower = 1
+        while lower < upper:
+            middle = (lower + upper) // 2
+            middle_slug = await get_slug(middle)
+            if middle_slug == latest_slug:
+                upper = middle
+            else:
+                lower = middle + 1
+
+        logger.info(f"Discovered latest SMBC legacy ID: {lower}")
+        return lower
+
+    async def scrape_full_archive(
+        self, start_id: int = 1
+    ) -> tuple[List[ComicRow], int]:
+        """Scrape the full SMBC archive through the latest discovered legacy ID."""
+        if start_id < 1:
+            raise ValueError("start_id must be >= 1")
+
+        latest_legacy_id = await self.discover_latest_legacy_id()
+        rows = await self.scrape_id_range(start_id, latest_legacy_id)
+        return rows, latest_legacy_id
+
     async def scrape_id_range(self, start_id: int, end_id: int) -> List[ComicRow]:
         """
         Crawls and scrapes all comics in a given ID range, concurrently.
@@ -283,3 +415,132 @@ class SmbcScraper:
 
         logger.info(f"Scrape complete. Found {len(results)} comics in the ID range.")
         return sorted(results, key=lambda r: r.date if r.date else date.min)
+
+    async def scrape_incremental(
+        self,
+        start_id: int,
+        stop_after_missing: int = 20,
+        max_new_comics: Optional[int] = None,
+    ) -> tuple[List[ComicRow], Optional[int]]:
+        """Scrape forward from a starting ID until a bounded streak of misses."""
+        if start_id < 1:
+            raise ValueError("start_id must be >= 1")
+        if stop_after_missing < 1:
+            raise ValueError("stop_after_missing must be >= 1")
+        if max_new_comics is not None and max_new_comics < 1:
+            raise ValueError("max_new_comics must be >= 1 when provided")
+
+        logger.info(
+            "Starting incremental SMBC scrape "
+            f"from ID {start_id} with stop_after_missing={stop_after_missing}"
+        )
+        results: List[ComicRow] = []
+        consecutive_misses = 0
+        current_id = start_id
+        last_successful_id: Optional[int] = None
+
+        while consecutive_misses < stop_after_missing:
+            comic_row = await self._scrape_one_comic(current_id)
+            if comic_row is None:
+                consecutive_misses += 1
+            else:
+                results.append(comic_row)
+                last_successful_id = current_id
+                consecutive_misses = 0
+                if max_new_comics is not None and len(results) >= max_new_comics:
+                    break
+            current_id += 1
+
+        logger.info(
+            "Incremental SMBC scrape complete. "
+            f"Found {len(results)} new comic(s); "
+            f"last_successful_id={last_successful_id!r}."
+        )
+        return (
+            sorted(results, key=lambda row: row.date if row.date else date.min),
+            last_successful_id,
+        )
+
+    async def _backfill_one_row(self, row: ComicRow, overwrite: bool) -> int:
+        response = await self.client.get(str(row.url))
+        if not response or response.status_code != 200:
+            logger.warning(
+                "Request failed during image backfill for "
+                f"{row.url}. Status: {response.status_code if response else 'N/A'}"
+            )
+            return 0
+
+        parsed_row, images_to_download = self._parse_page(
+            str(response.url), response.text
+        )
+        if not parsed_row:
+            logger.warning(
+                f"Could not parse comic page during image backfill: {row.url}"
+            )
+            return 0
+
+        if not overwrite:
+            images_to_download = [
+                (image_url, image_path)
+                for image_url, image_path in images_to_download
+                if not image_path.exists()
+            ]
+
+        if not images_to_download:
+            return 0
+
+        download_results = await asyncio.gather(
+            *[
+                self._download_image(image_url, image_path)
+                for image_url, image_path in images_to_download
+            ]
+        )
+        return sum(1 for result in download_results if result)
+
+    async def backfill_images(
+        self,
+        source_csv_path: Path,
+        limit: Optional[int] = None,
+        overwrite: bool = False,
+        concurrency: int = 2,
+    ) -> int:
+        """Download missing comic images from existing SMBC metadata exports."""
+        if concurrency < 1:
+            raise ValueError("concurrency must be >= 1")
+
+        source_rows = load_comics(source_csv_path)
+        if limit is not None:
+            if limit < 1:
+                raise ValueError("limit must be >= 1 when provided")
+            source_rows = source_rows[:limit]
+
+        if not source_rows:
+            logger.warning(
+                f"No SMBC rows available for image backfill in {source_csv_path}"
+            )
+            return 0
+
+        logger.info(
+            "Starting SMBC image backfill for "
+            f"{len(source_rows)} comic(s). overwrite={overwrite}"
+        )
+        downloaded_images = 0
+        sem = asyncio.Semaphore(concurrency)
+
+        async def backfill_one(row: ComicRow) -> int:
+            async with sem:
+                return await self._backfill_one_row(row, overwrite=overwrite)
+
+        with Progress() as progress:
+            task = progress.add_task(
+                "[cyan]Backfilling SMBC images...", total=len(source_rows)
+            )
+            backfill_tasks = [backfill_one(row) for row in source_rows]
+            for future in asyncio.as_completed(backfill_tasks):
+                downloaded_images += await future
+                progress.update(task, advance=1)
+
+        logger.info(
+            f"SMBC image backfill complete. Downloaded {downloaded_images} image(s)."
+        )
+        return downloaded_images

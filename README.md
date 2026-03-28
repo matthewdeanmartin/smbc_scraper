@@ -21,6 +21,30 @@ It has a CLI, see [/scripts/go.sh](scripts/go.sh) for example usage.
 
 `that_github_repo.py` you have to run it directly
 
+For the official site, you can now:
+
+- scrape a fixed ID range:
+  `uv run smbc-scrape smbc --start-id 1 --end-id 7500`
+- scrape the full archive and download all images:
+  `uv run smbc-scrape smbc-all`
+- incrementally fetch only new comics after a previous run:
+  `uv run smbc-scrape smbc-update`
+  If there is no state file yet, it will discover the current legacy archive
+  boundary from the site, scrape a recent bootstrap window, and then save
+  `out\smbc_ground_truth_state.json` for later runs. You can still force a
+  manual bootstrap with `--start-id 7501`.
+  After the first successful run, `smbc-update` will reuse
+  `out\smbc_ground_truth_state.json`.
+- backfill missing local images from an existing metadata export:
+  `uv run smbc-scrape smbc-images --output-dir out --data-dir data`
+  This only backfills images for comics already present in
+  `out\smbc_ground_truth.csv`.
+
+Use `--max-rate` to stay polite with the site.
+
+There is also a `Makefile` with helper targets like `make smbc-all`,
+`make smbc-update`, and `make smbc-images`.
+
 For cheap OCR and image descriptions from saved comic images, set
 `OPENROUTER_API_KEY` and run:
 

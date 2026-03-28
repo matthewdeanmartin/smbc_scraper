@@ -12,7 +12,7 @@ from rich.console import Console
 
 from smbc_scraper.core.http import HttpClient
 from smbc_scraper.core.logging import setup_logging
-from smbc_scraper.export import save_comics
+from smbc_scraper.export import load_comics, merge_comics, save_comics
 from smbc_scraper.sources.ohnorobot import OhNoRobotScraper
 from smbc_scraper.sources.openrouter_vision import (
     DEFAULT_OPENROUTER_MODEL,
@@ -20,7 +20,13 @@ from smbc_scraper.sources.openrouter_vision import (
     OpenRouterVisionScraper,
     get_openrouter_api_key,
 )
-from smbc_scraper.sources.smbc import SmbcScraper
+from smbc_scraper.sources.smbc import (
+    DEFAULT_INCREMENTAL_STATE_FILENAME,
+    IncrementalScrapeState,
+    SmbcScraper,
+    resolve_incremental_start_id,
+    save_incremental_state,
+)
 from smbc_scraper.sources.smbc_wiki import SmbcWikiScraper
 
 console = Console()
@@ -49,6 +55,89 @@ async def run_smbc(args: argparse.Namespace):
         await http_client.close()
 
 
+async def run_smbc_all(args: argparse.Namespace):
+    """Handler for scraping the full SMBC archive with images."""
+    console.print(
+        "[bold yellow]Starting full SMBC archive scrape "
+        "with image downloads[/bold yellow]"
+    )
+    http_client = HttpClient(cache_dir=str(args.cache_dir), rate_limit=args.max_rate)
+    try:
+        scraper = SmbcScraper(http_client, str(args.data_dir))
+        rows, latest_legacy_id = await scraper.scrape_full_archive(
+            start_id=args.start_id or 1
+        )
+        save_comics(rows, args.output_dir, "smbc_ground_truth")
+        save_incremental_state(
+            args.output_dir / DEFAULT_INCREMENTAL_STATE_FILENAME,
+            IncrementalScrapeState(last_scraped_id=latest_legacy_id),
+        )
+    finally:
+        await http_client.close()
+
+
+async def run_smbc_update(args: argparse.Namespace):
+    """Handler for the incremental SMBC update subcommand."""
+    console.print("[bold yellow]Starting incremental SMBC update[/bold yellow]")
+    state_path = args.state_file or (
+        args.output_dir / DEFAULT_INCREMENTAL_STATE_FILENAME
+    )
+    source_csv = args.output_dir / "smbc_ground_truth.csv"
+    http_client = HttpClient(cache_dir=str(args.cache_dir), rate_limit=args.max_rate)
+    try:
+        scraper = SmbcScraper(http_client, str(args.data_dir))
+        existing_rows = load_comics(source_csv)
+
+        bootstrap_latest_id: int | None = None
+        try:
+            start_id, previous_state = resolve_incremental_start_id(
+                state_path,
+                args.start_id,
+            )
+            new_rows, last_successful_id = await scraper.scrape_incremental(
+                start_id=start_id,
+                stop_after_missing=args.stop_after_missing,
+                max_new_comics=args.limit,
+            )
+        except ValueError:
+            bootstrap_latest_id = await scraper.discover_latest_legacy_id()
+            start_id = max(1, bootstrap_latest_id - args.bootstrap_lookback + 1)
+            previous_state = None
+            console.print(
+                "[bold yellow]No saved update state yet; "
+                f"bootstrapping from IDs {start_id}..{bootstrap_latest_id}"
+                "[/bold yellow]"
+            )
+            bootstrap_rows = await scraper.scrape_id_range(
+                start_id, bootstrap_latest_id
+            )
+            existing_urls = {str(row.url) for row in existing_rows}
+            new_rows = [
+                row for row in bootstrap_rows if str(row.url) not in existing_urls
+            ]
+            last_successful_id = bootstrap_latest_id
+
+        if not new_rows and bootstrap_latest_id is None:
+            console.print("[bold green]No new SMBC comics found.[/bold green]")
+        elif not new_rows:
+            console.print(
+                "[bold green]Bootstrap complete; "
+                "no new SMBC comics were needed.[/bold green]"
+            )
+        else:
+            merged_rows = merge_comics(existing_rows, new_rows)
+            save_comics(merged_rows, args.output_dir, "smbc_ground_truth")
+
+        merged_rows = merge_comics(existing_rows, new_rows)
+        prior_last_id = previous_state.last_scraped_id if previous_state else 0
+        if last_successful_id is not None and last_successful_id > prior_last_id:
+            save_incremental_state(
+                state_path, IncrementalScrapeState(last_scraped_id=last_successful_id)
+            )
+    finally:
+        await http_client.close()
+
+
 async def run_ohnorobot(args: argparse.Namespace):
     """Handler for the 'ohnorobot' subcommand."""
     console.print("[bold yellow]Starting Scrape from ohnorobot.com[/bold yellow]")
@@ -59,6 +148,26 @@ async def run_ohnorobot(args: argparse.Namespace):
         # its own queries.
         results = await scraper.scrape(input_dir=args.output_dir, limit=args.limit)
         save_comics(results, args.output_dir, "ohnorobot")
+    finally:
+        await http_client.close()
+
+
+async def run_smbc_images(args: argparse.Namespace):
+    """Handler for the SMBC image backfill subcommand."""
+    console.print("[bold yellow]Starting SMBC image backfill[/bold yellow]")
+    source_csv = args.source_csv or (args.output_dir / "smbc_ground_truth.csv")
+    http_client = HttpClient(cache_dir=str(args.cache_dir), rate_limit=args.max_rate)
+    try:
+        scraper = SmbcScraper(http_client, str(args.data_dir))
+        downloaded_images = await scraper.backfill_images(
+            source_csv_path=source_csv,
+            limit=args.limit,
+            overwrite=args.overwrite,
+            concurrency=args.concurrency,
+        )
+        console.print(
+            f"[bold green]Downloaded {downloaded_images} SMBC image(s).[/bold green]"
+        )
     finally:
         await http_client.close()
 
@@ -151,6 +260,57 @@ def main():
     )
     smbc_parser.set_defaults(func=run_smbc)
 
+    smbc_all_parser = subparsers.add_parser(
+        "smbc-all",
+        help="Scrape the full SMBC archive and download all comic images.",
+    )
+    smbc_all_parser.add_argument(
+        "--start-id",
+        type=int,
+        default=1,
+        help="Optional starting legacy ID for a full-archive scrape.",
+    )
+    smbc_all_parser.set_defaults(func=run_smbc_all)
+
+    smbc_update_parser = subparsers.add_parser(
+        "smbc-update",
+        help="Incrementally scrape new SMBC comics using a saved state file.",
+    )
+    smbc_update_parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=None,
+        help="Optional path for incremental SMBC state storage.",
+    )
+    smbc_update_parser.add_argument(
+        "--start-id",
+        type=int,
+        default=None,
+        help="Bootstrap start ID to use when no state file exists yet.",
+    )
+    smbc_update_parser.add_argument(
+        "--stop-after-missing",
+        type=int,
+        default=20,
+        help="Stop after this many consecutive missing comic IDs.",
+    )
+    smbc_update_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional cap on the number of newly discovered comics to save.",
+    )
+    smbc_update_parser.add_argument(
+        "--bootstrap-lookback",
+        type=int,
+        default=50,
+        help=(
+            "On first run, scrape this many recent IDs before the discovered "
+            "latest one."
+        ),
+    )
+    smbc_update_parser.set_defaults(func=run_smbc_update)
+
     # Subcommand for ohnorobot.com
     onr_parser = subparsers.add_parser(
         "ohnorobot",
@@ -175,6 +335,35 @@ def main():
         "--end-id", type=int, required=True, help="End comic ID (e.g., 7500)."
     )
     wiki_parser.set_defaults(func=run_wiki)
+
+    smbc_images_parser = subparsers.add_parser(
+        "smbc-images",
+        help="Download missing SMBC comic images from an existing metadata CSV.",
+    )
+    smbc_images_parser.add_argument(
+        "--source-csv",
+        type=Path,
+        default=None,
+        help="Existing SMBC CSV export used to locate canonical comic pages.",
+    )
+    smbc_images_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional limit on the number of CSV rows to process.",
+    )
+    smbc_images_parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=2,
+        help="Number of comic pages to backfill concurrently.",
+    )
+    smbc_images_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Redownload images even if matching local files already exist.",
+    )
+    smbc_images_parser.set_defaults(func=run_smbc_images)
 
     # Subcommand for OpenRouter OCR + description
     ocr_parser = subparsers.add_parser(
@@ -220,6 +409,20 @@ def main():
 
     if args.max_rate <= 0:
         parser.error("--max-rate must be > 0")
+    if getattr(args, "start_id", 1) is not None and getattr(args, "start_id", 1) <= 0:
+        parser.error("--start-id must be > 0")
+    if (
+        getattr(args, "stop_after_missing", 1) is not None
+        and getattr(args, "stop_after_missing", 1) <= 0
+    ):
+        parser.error("--stop-after-missing must be > 0")
+    if (
+        getattr(args, "bootstrap_lookback", 1) is not None
+        and getattr(args, "bootstrap_lookback", 1) <= 0
+    ):
+        parser.error("--bootstrap-lookback must be > 0")
+    if getattr(args, "limit", 1) is not None and getattr(args, "limit", 1) <= 0:
+        parser.error("--limit must be > 0")
     if getattr(args, "concurrency", 1) <= 0:
         parser.error("--concurrency must be > 0")
 

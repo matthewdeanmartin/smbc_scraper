@@ -28,6 +28,9 @@ echo ""
 #
 echo "--- Running Ground-Truth Scraper for 2024 ---"
 # smbc-scrape --log-level "$LOG_LEVEL" --max-rate 2 smbc --start-id 1 --end-id 7645
+# smbc-scrape --log-level "$LOG_LEVEL" --max-rate 1 smbc-all
+# smbc-scrape --log-level "$LOG_LEVEL" --max-rate 1 smbc-update
+# smbc-scrape --log-level "$LOG_LEVEL" --max-rate 1 smbc-images
 
 
 # ---

@@ -83,6 +83,15 @@ target-version = "py39"
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "C", "B"]
 
+[tool.mypy]
+python_version = "3.14"
+plugins = ["pydantic.mypy"]
+pretty = true
+
+[[tool.mypy.overrides]]
+module = ["pandas", "pandas.*", "yaml"]
+ignore_missing_imports = true
+
 
 [build-system]
 requires = ["hatchling"]

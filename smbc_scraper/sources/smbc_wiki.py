@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 from loguru import logger
 from rich.progress import Progress
 
-from smbc_scraper.core.http import HttpClient
+from smbc_scraper.core.http import HttpGetClient
 from smbc_scraper.models import ComicRow
 
 
@@ -18,13 +18,13 @@ class SmbcWikiScraper:
 
     API_URL = "https://www.smbc-wiki.com/api.php"
 
-    def __init__(self, http_client: HttpClient):
+    def __init__(self, http_client: HttpGetClient):
         self.client = http_client
 
     def _extract_section(self, wikitext: str, section_name: str) -> Optional[str]:
         """Extracts text from a specific wikitext section (e.g., ==Transcript==)."""
         logger.trace(f"Attempting to extract section: '{section_name}'")
-        # This pattern looks for a section header and captures content until the next header of the same or higher level.
+        # Capture the named section until the next same-or-higher-level header.
         pattern = re.compile(
             rf"==\s*{section_name}\s*==\n(.*?)(?=\n==[^=]|\Z)",
             re.DOTALL | re.IGNORECASE,
@@ -44,7 +44,7 @@ class SmbcWikiScraper:
 
     def _extract_smbc_url(self, wikitext: str) -> Optional[str]:
         """Finds or constructs the original smbc-comics.com URL from the wikitext."""
-        # Defines patterns to find either modern (/comic/slug) or legacy (index.php?...) URLs.
+        # Look for either modern (/comic/slug) or legacy (index.php?...) URLs.
         # It tries a more specific pattern (inside a template) first.
         explicit_url_patterns = [
             # 1. Look for explicit URL in a comic template: {{Comic|...|url=...}}
@@ -63,13 +63,12 @@ class SmbcWikiScraper:
                 )
                 return url
 
-        # 3. Fallback: If no explicit URL, try to construct it from the |title= field in the {{comic}} template.
-        # This is common in older wiki pages like the one you found.
+        # Fallback: construct the URL from the |title= field in {{comic}}.
         title_slug_pattern = r"\{\{comic.*?\|\s*title\s*=\s*([\w-]+)"
         match = re.search(title_slug_pattern, wikitext, re.DOTALL | re.IGNORECASE)
         if match:
             slug = match.group(1).strip()
-            # Ensure the extracted slug looks like a date or a valid slug, not just a number (which might be the comic ID)
+            # Ignore plain numeric IDs here; they are not modern comic slugs.
             if re.match(r"^\d{4}-\d{2}-\d{2}$", slug) or not slug.isdigit():
                 url = f"https://www.smbc-comics.com/comic/{slug}"
                 logger.info(
@@ -81,14 +80,14 @@ class SmbcWikiScraper:
         return None
 
     async def _fetch_and_parse_page(
-            self, page_title_or_id: str, original_id: int, redirect_depth: int = 0
+        self, page_title_or_id: str, original_id: int, redirect_depth: int = 0
     ) -> Optional[ComicRow]:
         """
         Fetches a wiki page by title/ID, handles redirects, and parses the content.
         """
         if redirect_depth > 3:
             logger.error(
-                f"Redirect limit exceeded for initial comic ID '{original_id}'. Aborting."
+                f"Redirect limit exceeded for initial comic ID '{original_id}'."
             )
             return None
 
@@ -123,7 +122,8 @@ class SmbcWikiScraper:
             if redirect_match:
                 new_page_title = redirect_match.group(1).strip()
                 logger.info(
-                    f"ID {original_id} ('{page_title_or_id}') redirects to '{new_page_title}'. Following."
+                    f"ID {original_id} ('{page_title_or_id}') redirects to "
+                    f"'{new_page_title}'. Following."
                 )
                 return await self._fetch_and_parse_page(
                     new_page_title, original_id, redirect_depth + 1
@@ -133,7 +133,8 @@ class SmbcWikiScraper:
             url = self._extract_smbc_url(wikitext)
             if not url:
                 logger.warning(
-                    f"Could not find SMBC URL in wiki page for ID: '{original_id}' (final page: '{page_title}')"
+                    "Could not find SMBC URL in wiki page for ID "
+                    f"'{original_id}' (final page: '{page_title}')"
                 )
                 return None
 
@@ -158,7 +159,8 @@ class SmbcWikiScraper:
             )
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
             logger.error(
-                f"Failed to parse wiki JSON for page '{page_title_or_id}' (from ID {original_id}). Error: {e}"
+                "Failed to parse wiki JSON for page "
+                f"'{page_title_or_id}' (from ID {original_id}). Error: {e}"
             )
             logger.error("--- Raw Response Text that caused the error ---")
             logger.error(response.text)
@@ -183,8 +185,14 @@ class SmbcWikiScraper:
                 async with sem:
                     return await fn(*a, **kw)
 
-            scrape_tasks = [bounded(self._fetch_and_parse_page, page_title_or_id=str(comic_id), original_id=comic_id)
-                            for comic_id in ids_to_scrape]
+            scrape_tasks = [
+                bounded(
+                    self._fetch_and_parse_page,
+                    page_title_or_id=str(comic_id),
+                    original_id=comic_id,
+                )
+                for comic_id in ids_to_scrape
+            ]
             # scrape_tasks = [
             #     self._fetch_and_parse_page(str(comic_id), original_id=comic_id)
             #     for comic_id in ids_to_scrape

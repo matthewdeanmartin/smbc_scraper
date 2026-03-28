@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Protocol
 
 import httpx
 from hishel import AsyncCacheTransport, AsyncFileStorage, Controller
@@ -33,12 +34,18 @@ class RateLimiter:
             self.last_request_time = asyncio.get_event_loop().time()
 
 
+class HttpGetClient(Protocol):
+    """Protocol for collaborators that provide the GET surface used by scrapers."""
+
+    async def get(self, url: str) -> Optional[httpx.Response]: ...
+
+
 class HttpClient:
     """HTTP wrapper with caching, retries, and rate limiting."""
 
     def __init__(
         self,
-        cache_dir: str,
+        cache_dir: str | Path,
         rate_limit: float = 1.0,
         user_agent: str = "SMBC-Scraper/1.0",
     ):
@@ -60,7 +67,7 @@ class HttpClient:
                 retries=0
             ),  # Retries handled by tenacity
             controller=Controller(cacheable_methods=["GET"]),
-            storage=AsyncFileStorage(base_path=cache_dir),
+            storage=AsyncFileStorage(base_path=Path(cache_dir)),
         )
 
         self.client = httpx.AsyncClient(
