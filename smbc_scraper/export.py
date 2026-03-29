@@ -116,5 +116,5 @@ def save_comics(
                 logger.error(f"Failed to export to Parquet: {e}")
 
     console.print(
-        f"[bold green]✓ Export complete for source '{source_name}'.[/bold green]"
+        f"[bold green]Export complete for source '{source_name}'.[/bold green]"
     )

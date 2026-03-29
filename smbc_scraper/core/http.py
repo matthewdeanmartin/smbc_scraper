@@ -20,7 +20,7 @@ from tenacity import (
 class RateLimiter:
     """A simple async rate limiter to ensure we don't hit servers too fast."""
 
-    def __init__(self, rate: float = 1.0):
+    def __init__(self, rate: float = 10.0):
         self.period = 1.0 / rate
         self.last_request_time = 0.0
         self._lock = asyncio.Lock()
@@ -46,7 +46,7 @@ class HttpClient:
     def __init__(
         self,
         cache_dir: str | Path,
-        rate_limit: float = 1.0,
+        rate_limit: float = 10.0,
         user_agent: str = "SMBC-Scraper/1.0",
     ):
         self.rate_limiter = RateLimiter(rate_limit)
@@ -91,8 +91,12 @@ class HttpClient:
                     )
                     response = await self.client.get(url)
 
-                    # Raise for 429 (Too Many Requests) and 5xx errors to trigger retry
-                    if response.status_code == 429 or response.status_code >= 500:
+                    # Raise for 403 (Forbidden), 429 (Too Many Requests),
+                    # and 5xx errors to trigger retry
+                    if (
+                        response.status_code in {403, 429}
+                        or response.status_code >= 500
+                    ):
                         response.raise_for_status()
 
                     return response

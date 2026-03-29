@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}About - SMBC for the Blind{% endblock %}
+
+{% block content %}
+<article>
+    <h1>About This Project</h1>
+    
+    <section>
+        <p><strong>SMBC for the Blind</strong> is a specialized accessibility project designed to provide a high-efficiency, text-based interface for the comic <em>Saturday Morning Breakfast Cereal</em>.</p>
+        <p>This is an <strong>LLM-assisted transformation</strong> of official SMBC comics. The process of generating transcripts and descriptions was performed by various Large Language Models.</p>
+        <p><strong>Matthew Martin</strong> supervised the LLMs to ensure accuracy and maintain the spirit of the original work.</p>
+    </section>
+
+    <section>
+        <h2>Copyright & Credits</h2>
+        <p><strong>SMBC and all comics are All Rights Reserved to Zach Weinersmith.</strong></p>
+        <p>Please visit the official website to view the comics in their original format: 
+           <a href="https://www.smbc-comics.com">https://www.smbc-comics.com</a>.
+        </p>
+        <p>If you enjoy these comics, please consider supporting the artist on Patreon:
+           <a href="https://www.patreon.com/ZachWeinersmith">https://www.patreon.com/ZachWeinersmith</a>.
+        </p>
+    </section>
+
+    <section>
+        <h2>Accessibility Features</h2>
+        <ul>
+            <li>High-contrast dark mode.</li>
+            <li>Smart focus management for rapid Tab/Enter navigation.</li>
+            <li>Semantic HTML5 for screen reader efficiency.</li>
+            <li>No conflicting access keys.</li>
+        </ul>
+    </section>
+</article>
+{% endblock %}

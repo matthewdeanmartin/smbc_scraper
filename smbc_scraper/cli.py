@@ -65,7 +65,7 @@ async def run_smbc_all(args: argparse.Namespace):
     try:
         scraper = SmbcScraper(http_client, str(args.data_dir))
         rows, latest_legacy_id = await scraper.scrape_full_archive(
-            start_id=args.start_id or 1
+            start_id=args.start_id or 1, limit=args.limit
         )
         save_comics(rows, args.output_dir, "smbc_ground_truth")
         save_incremental_state(
@@ -134,6 +134,44 @@ async def run_smbc_update(args: argparse.Namespace):
             save_incremental_state(
                 state_path, IncrementalScrapeState(last_scraped_id=last_successful_id)
             )
+    finally:
+        await http_client.close()
+
+
+async def run_smbc_missing(args: argparse.Namespace):
+    """Handler for the 'smbc-missing' subcommand."""
+    console.print("[bold yellow]Starting Scrape of missing SMBC IDs[/bold yellow]")
+    source_csv = args.source_csv or (args.output_dir / "smbc_ground_truth.csv")
+    http_client = HttpClient(cache_dir=str(args.cache_dir), rate_limit=args.max_rate)
+    try:
+        scraper = SmbcScraper(http_client, str(args.data_dir))
+        existing_rows = load_comics(source_csv)
+        new_rows = await scraper.scrape_missing_ids(source_csv)
+
+        if not new_rows:
+            console.print("[bold green]No missing SMBC comics found.[/bold green]")
+        else:
+            merged_rows = merge_comics(existing_rows, new_rows)
+            save_comics(merged_rows, args.output_dir, "smbc_ground_truth")
+            console.print(
+                f"[bold green]Added {len(new_rows)} missing comics.[/bold green]"
+            )
+    finally:
+        await http_client.close()
+
+
+async def run_smbc_rebuild(args: argparse.Namespace):
+    """Handler for the 'smbc-rebuild' subcommand."""
+    console.print(
+        "[bold yellow]Rebuilding SMBC ID index from local HTML files...[/bold yellow]"
+    )
+    source_csv = args.source_csv or (args.output_dir / "smbc_ground_truth.csv")
+    http_client = HttpClient(cache_dir=str(args.cache_dir), rate_limit=args.max_rate)
+    try:
+        scraper = SmbcScraper(http_client, str(args.data_dir))
+        updated_rows = await scraper.rebuild_id_index_from_local_files(source_csv)
+        save_comics(updated_rows, args.output_dir, "smbc_ground_truth")
+        console.print("[bold green]Local index rebuild complete.[/bold green]")
     finally:
         await http_client.close()
 
@@ -235,7 +273,7 @@ def main():
         help="Directory for HTTP caching.",
     )
     parser.add_argument(
-        "--max-rate", type=float, default=2.0, help="Max requests per second."
+        "--max-rate", type=float, default=10.0, help="Max requests per second."
     )
     parser.add_argument(
         "--log-level",
@@ -270,7 +308,37 @@ def main():
         default=1,
         help="Optional starting legacy ID for a full-archive scrape.",
     )
+    smbc_all_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional cap on the number of comics to scrape.",
+    )
     smbc_all_parser.set_defaults(func=run_smbc_all)
+
+    smbc_missing_parser = subparsers.add_parser(
+        "smbc-missing",
+        help="Scrape missing SMBC IDs by comparing existing CSV with the full archive.",
+    )
+    smbc_missing_parser.add_argument(
+        "--source-csv",
+        type=Path,
+        default=None,
+        help="Existing SMBC CSV export to check for missing IDs.",
+    )
+    smbc_missing_parser.set_defaults(func=run_smbc_missing)
+
+    smbc_rebuild_parser = subparsers.add_parser(
+        "smbc-rebuild",
+        help="Rebuild legacy ID index by scanning local HTML files.",
+    )
+    smbc_rebuild_parser.add_argument(
+        "--source-csv",
+        type=Path,
+        default=None,
+        help="Existing SMBC CSV export to update with discovered IDs.",
+    )
+    smbc_rebuild_parser.set_defaults(func=run_smbc_rebuild)
 
     smbc_update_parser = subparsers.add_parser(
         "smbc-update",

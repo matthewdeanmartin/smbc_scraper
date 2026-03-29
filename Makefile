@@ -1,13 +1,13 @@
 PYTHON ?= uv run
 SCRAPER := $(PYTHON) smbc-scrape
 LOG_LEVEL ?= INFO
-MAX_RATE ?= 1.0
+MAX_RATE ?= 10.0
 OUTPUT_DIR ?= out
 DATA_DIR ?= data
 CACHE_DIR ?= .cache
 DOCS_FILES := README.md docs
 
-.PHONY: help sync test lint mypy docs docs-build docs-serve format-md spellcheck smbc smbc-all smbc-update smbc-images wiki ohnorobot ocr
+.PHONY: help sync test lint mypy ty check docs docs-build docs-serve format-md spellcheck smbc smbc-all smbc-fill-in-missing smbc-rebuild smbc-update smbc-images wiki ohnorobot ocr web-gen web-clean web-serve web-open
 
 help:
 	@echo "Targets:"
@@ -15,17 +15,25 @@ help:
 	@echo "  make test"
 	@echo "  make lint"
 	@echo "  make mypy"
+	@echo "  make ty"
+	@echo "  make check"
 	@echo "  make docs-build"
 	@echo "  make docs-serve"
 	@echo "  make format-md"
 	@echo "  make spellcheck"
 	@echo "  make smbc START_ID=1 END_ID=7645"
 	@echo "  make smbc-all"
+	@echo "  make smbc-fill-in-missing"
+	@echo "  make smbc-rebuild"
 	@echo "  make smbc-update [START_ID=7501] [BOOTSTRAP_LOOKBACK=50]"
 	@echo "  make smbc-images"
 	@echo "  make wiki START_ID=1 END_ID=7645"
 	@echo "  make ohnorobot LIMIT=100"
 	@echo "  make ocr"
+	@echo "  make web-gen          - Generate the accessible static site"
+	@echo "  make web-clean        - Remove the generated static site"
+	@echo "  make web-serve        - Serve the generated site locally"
+	@echo "  make web-open         - Generate, open in browser, and serve"
 
 sync:
 	uv sync
@@ -38,6 +46,11 @@ lint:
 
 mypy:
 	uv run mypy smbc_scraper test
+
+ty:
+	uv run ty check smbc_scraper test
+
+check: lint mypy ty test
 
 docs: docs-build
 
@@ -57,7 +70,13 @@ smbc:
 	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" smbc --start-id "$(START_ID)" --end-id "$(END_ID)"
 
 smbc-all:
-	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" smbc-all
+	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" smbc-all $(if $(LIMIT),--limit "$(LIMIT)",)
+
+smbc-fill-in-missing:
+	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" smbc-missing
+
+smbc-rebuild:
+	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" smbc-rebuild
 
 smbc-update:
 	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" smbc-update $(if $(START_ID),--start-id "$(START_ID)",) $(if $(BOOTSTRAP_LOOKBACK),--bootstrap-lookback "$(BOOTSTRAP_LOOKBACK)",)
@@ -73,3 +92,15 @@ ohnorobot:
 
 ocr:
 	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" ocr
+
+web-gen:
+	cd blind_smbc && $(PYTHON) python generator.py
+
+web-clean:
+	powershell -Command "if (Test-Path blind_smbc/dist) { Remove-Item -Recurse -Force blind_smbc/dist }"
+
+web-serve:
+	cd blind_smbc/dist && python -m http.server 8000
+
+web-open: web-gen
+	start http://localhost:8000 && cd blind_smbc/dist && python -m http.server 8000

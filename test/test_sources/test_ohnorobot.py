@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
+import httpx
 import pytest
 
 from smbc_scraper.sources.ohnorobot import OhNoRobotScraper
 
 
 class DummyHttpClient:
-    async def get(self, _url: str):
+    async def get(self, url: str) -> Optional[httpx.Response]:
         raise AssertionError("HTTP should not be called in parser unit tests")
 
 

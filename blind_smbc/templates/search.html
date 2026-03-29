@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}Search - SMBC for the Blind{% endblock %}
+
+{% block content %}
+<h1>Comic Search</h1>
+<p>Search all comics by keywords in the transcript or hover text. Showing top 10 matches.</p>
+
+<section aria-labelledby="search-label">
+    <label id="search-label" for="search-input">Enter keywords:</label>
+    <input type="text" id="search-input" placeholder="e.g. 'philosophy', 'god', 'science'..." autofocus>
+    
+    <div id="search-status" aria-live="polite" class="comic-meta"></div>
+    
+    <div id="results" aria-label="Search results">
+        <!-- Results will appear here -->
+    </div>
+</section>
+
+<script>
+    let searchIndex = [];
+
+    // Load the search index
+    fetch('/search_index.json')
+        .then(response => response.json())
+        .then(data => {
+            searchIndex = data;
+            document.getElementById('search-status').textContent = 'Index loaded. Ready to search ' + searchIndex.length + ' comics.';
+        })
+        .catch(err => {
+            console.error('Failed to load search index:', err);
+            document.getElementById('search-status').textContent = 'Error loading search index.';
+        });
+
+    const searchInput = document.getElementById('search-input');
+    const resultsContainer = document.getElementById('results');
+    const statusLabel = document.getElementById('search-status');
+
+    searchInput.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase().trim();
+        if (query.length < 2) {
+            resultsContainer.innerHTML = '';
+            statusLabel.textContent = query.length === 0 ? 'Enter keywords to search.' : 'Type at least 2 characters.';
+            return;
+        }
+
+        const matches = [];
+        for (const comic of searchIndex) {
+            const text = (comic.text + ' ' + comic.hover + ' ' + comic.slug).toLowerCase();
+            if (text.includes(query)) {
+                matches.push(comic);
+            }
+            if (matches.length >= 10) break;
+        }
+
+        renderResults(matches, query);
+    });
+
+    function renderResults(matches, query) {
+        if (matches.length === 0) {
+            resultsContainer.innerHTML = '<p>No matches found for "' + query + '".</p>';
+            statusLabel.textContent = 'Found 0 matches.';
+            return;
+        }
+
+        statusLabel.textContent = 'Found ' + matches.length + ' matches. Showing top 10.';
+        
+        let html = '<ul style="list-style: none; padding: 0;">';
+        matches.forEach(match => {
+            html += `
+                <li class="search-result">
+                    <a href="/comics/${match.slug}.html" style="font-weight: bold; font-size: 1.1rem;">
+                        ${match.date}: ${match.slug}
+                    </a>
+                    <p style="font-size: 0.9rem; color: #aaa; margin: 0.5rem 0;">
+                        ${match.text.substring(0, 200)}${match.text.length > 200 ? '...' : ''}
+                    </p>
+                </li>
+            `;
+        });
+        html += '</ul>';
+        resultsContainer.innerHTML = html;
+    }
+</script>
+{% endblock %}

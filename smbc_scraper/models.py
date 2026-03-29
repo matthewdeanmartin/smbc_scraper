@@ -23,6 +23,11 @@ class ComicRow(BaseModel):
         )
     )
 
+    legacy_id: int | None = Field(
+        None,
+        description="The legacy numeric ID of the comic, if available.",
+    )
+
     comic_text: str | None = Field(
         None,
         description=(

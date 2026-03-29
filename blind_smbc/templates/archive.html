@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block title %}Archive - SMBC for the Blind{% endblock %}
+
+{% block content %}
+<h1>Comic Archive</h1>
+<p>List of all comics in reverse chronological order.</p>
+
+<nav aria-label="Archive list">
+    <ul>
+        {% for comic in comics %}
+        <li>
+            <a href="/comics/{{ comic.slug }}.html">{{ comic.date }}: {{ comic.slug }}</a>
+        </li>
+        {% endfor %}
+    </ul>
+</nav>
+{% endblock %}

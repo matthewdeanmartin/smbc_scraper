@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Optional
 
+import httpx
 import pytest
 
 from smbc_scraper.models import ComicRow
@@ -16,7 +18,7 @@ from smbc_scraper.sources.smbc import (
 
 
 class DummyHttpClient:
-    async def get(self, _url: str):
+    async def get(self, url: str) -> Optional[httpx.Response]:
         raise AssertionError("HTTP should not be called in parser unit tests")
 
 

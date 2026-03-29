@@ -83,8 +83,27 @@ class SmbcScraper:
         self.client = http_client
         self.data_dir = Path(data_dir)
 
-    @staticmethod
-    def _extract_slug(url: str) -> str:
+    def _extract_legacy_id(self, url: str) -> Optional[int]:
+        """
+        Extract a legacy ID from index.php?id=<id>
+        or index.php?db=comics&id=<id> URLs.
+        """
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+        if comic_ids := query_params.get("id"):
+            try:
+                return int(comic_ids[0])
+            except ValueError:
+                pass
+
+        # Try to see if slug is an ID
+        slug = self._extract_slug(url)
+        try:
+            return int(slug)
+        except ValueError:
+            return None
+
+    def _extract_slug(self, url: str) -> str:
         """Extract a slug from /comic/<slug> or legacy index.php?id=<id> URLs."""
         parsed_url = urlparse(url)
         path = parsed_url.path.rstrip("/")
@@ -98,6 +117,169 @@ class SmbcScraper:
             return comic_ids[0]
 
         return url.rstrip("/").rsplit("/", maxsplit=1)[-1]
+
+    async def rebuild_id_index_from_local_files(
+        self, source_csv_path: Path, max_id: Optional[int] = None
+    ) -> List[ComicRow]:
+        """
+        Reconstruct the legacy ID → slug mapping and backfill legacy_id in the CSV.
+
+        The saved HTML pages do not embed the legacy ID, so we walk the full ID
+        range by requesting each index.php?db=comics&id=N URL.  These requests
+        will be served from the HTTP cache (populated by the original full scrape)
+        so they are fast and require no network access for already-scraped IDs.
+        """
+        existing_rows = load_comics(source_csv_path)
+        # Use mutable dicts so we can update legacy_id in place.
+        row_map: dict[str, dict] = {
+            row.slug: row.model_dump() for row in existing_rows
+        }
+
+        if not row_map:
+            logger.warning("No existing rows found in CSV; nothing to rebuild.")
+            return []
+
+        if not max_id:
+            max_id = await self.discover_latest_legacy_id()
+
+        # Only probe IDs for rows that still lack a legacy_id.
+        slugs_missing_id = {
+            slug for slug, d in row_map.items() if d.get("legacy_id") is None
+        }
+        if not slugs_missing_id:
+            logger.info("All rows already have a legacy_id; nothing to rebuild.")
+            return existing_rows
+
+        logger.info(
+            f"Probing IDs 1–{max_id} to backfill legacy_id "
+            f"for {len(slugs_missing_id)} rows (HTTP cache will be used)..."
+        )
+
+        updated_count = 0
+        sem = asyncio.Semaphore(16)
+
+        async def probe(i: int) -> Tuple[int, Optional[str]]:
+            async with sem:
+                row = await self._get_row_for_legacy_id(i)
+                return i, (row.slug if row else None)
+
+        with Progress() as progress:
+            task = progress.add_task(
+                "[cyan]Rebuilding ID index...", total=max_id
+            )
+            probe_futures = [probe(i) for i in range(1, max_id + 1)]
+            for f in asyncio.as_completed(probe_futures):
+                comic_id, slug = await f
+                if slug and slug in slugs_missing_id:
+                    row_map[slug]["legacy_id"] = comic_id
+                    slugs_missing_id.discard(slug)
+                    updated_count += 1
+                progress.update(task, advance=1)
+
+        logger.info(f"Rebuilt legacy_id for {updated_count} rows.")
+        if slugs_missing_id:
+            logger.warning(
+                f"{len(slugs_missing_id)} rows still have no legacy_id "
+                "(not found in the probed ID range)."
+            )
+        return [ComicRow.model_validate(d) for d in row_map.values()]
+
+    async def _resolve_truly_missing_ids(
+        self, candidate_ids: List[int], existing_slugs: set[str]
+    ) -> List[int]:
+        """Resolve ID→slug mapping to find IDs not yet in the CSV."""
+        truly_missing: List[int] = []
+        sem = asyncio.Semaphore(4)
+
+        async def probe_id(i: int) -> Tuple[int, Optional[str], bool]:
+            async with sem:
+                row = await self._get_row_for_legacy_id(i)
+                if row is None:
+                    return i, None, False
+                return i, row.slug, True
+
+        probe_failed = 0
+        with Progress() as progress:
+            probe_task = progress.add_task(
+                "[cyan]Resolving ID→slug mapping...", total=len(candidate_ids)
+            )
+            probe_futures = [probe_id(i) for i in candidate_ids]
+            for f in asyncio.as_completed(probe_futures):
+                comic_id, slug, ok = await f
+                if not ok:
+                    probe_failed += 1
+                elif slug not in existing_slugs:
+                    truly_missing.append(comic_id)
+                progress.update(probe_task, advance=1)
+
+        if probe_failed:
+            logger.warning(
+                f"{probe_failed} ID probes failed (rate-limited or network error); "
+                "those IDs were skipped. Re-run to retry them."
+            )
+        return truly_missing
+
+    async def scrape_missing_ids(
+        self, source_csv_path: Path, max_id: Optional[int] = None
+    ) -> List[ComicRow]:
+        """
+        Identify missing IDs in the given range and scrape them.
+
+        Uses slugs (not legacy_id) as the primary existence check so that
+        CSVs produced before the legacy_id field was introduced are handled
+        correctly.  Legacy IDs are used as a fast-path skip when available.
+        """
+        if not source_csv_path.exists():
+            logger.warning(f"Source CSV not found: {source_csv_path}")
+            return []
+
+        existing_rows = load_comics(source_csv_path)
+        existing_slugs: set[str] = {row.slug for row in existing_rows}
+        existing_ids: set[int] = {
+            row.legacy_id for row in existing_rows if row.legacy_id is not None
+        }
+
+        if not max_id:
+            max_id = await self.discover_latest_legacy_id()
+
+        candidate_ids = [i for i in range(1, max_id + 1) if i not in existing_ids]
+        if not candidate_ids:
+            logger.info("No missing IDs found.")
+            return []
+
+        logger.info(
+            f"Checking {len(candidate_ids)} IDs not covered by legacy_id index "
+            f"(total max_id={max_id}, already indexed={len(existing_ids)})..."
+        )
+
+        truly_missing = await self._resolve_truly_missing_ids(
+            candidate_ids, existing_slugs
+        )
+
+        if not truly_missing:
+            logger.info("No missing IDs found after slug resolution.")
+            return []
+
+        logger.info(f"Found {len(truly_missing)} truly missing IDs. Scraping...")
+        new_rows: List[ComicRow] = []
+        sem = asyncio.Semaphore(4)
+        with Progress() as progress:
+            scrape_task = progress.add_task(
+                "[cyan]Scraping missing SMBC IDs...", total=len(truly_missing)
+            )
+
+            async def bounded_scrape(i: int) -> Optional[ComicRow]:
+                async with sem:
+                    return await self._scrape_one_comic(i)
+
+            scrape_futures = [bounded_scrape(i) for i in truly_missing]
+            for f in asyncio.as_completed(scrape_futures):
+                result = await f
+                if result:
+                    new_rows.append(result)
+                progress.update(scrape_task, advance=1)
+
+        return new_rows
 
     @classmethod
     def _infer_date_from_image_url(cls, image_url: str) -> Optional[date]:
@@ -137,7 +319,7 @@ class SmbcScraper:
         return False
 
     def _parse_page(  # noqa: C901
-        self, url: str, content: str
+        self, url: str, content: str, legacy_id: Optional[int] = None
     ) -> Tuple[Optional[ComicRow], List[Tuple[str, Path]]]:
         """Parses the HTML of a single comic page to extract data and image URLs."""
         tree = HTMLParser(content)
@@ -231,6 +413,7 @@ class SmbcScraper:
         row = ComicRow(
             url=canonical_url,
             slug=slug,
+            legacy_id=legacy_id,
             date=comic_date,
             page_title=page_title_node.text(strip=True) if page_title_node else slug,
             hover_text=hover_text,
@@ -274,7 +457,9 @@ class SmbcScraper:
 
         # Parse the final page content to get the comic row with its canonical
         # date and slug.
-        comic_row, images_to_download = self._parse_page(final_url, response.text)
+        comic_row, images_to_download = self._parse_page(
+            final_url, response.text, legacy_id=comic_id
+        )
 
         if not comic_row:
             return None
@@ -311,7 +496,9 @@ class SmbcScraper:
             )
             return None
 
-        comic_row, _ = self._parse_page(str(response.url), response.text)
+        comic_row, _ = self._parse_page(
+            str(response.url), response.text, legacy_id=comic_id
+        )
         return comic_row
 
     async def get_latest_comic_slug(self) -> str:
@@ -372,14 +559,19 @@ class SmbcScraper:
         return lower
 
     async def scrape_full_archive(
-        self, start_id: int = 1
+        self, start_id: int = 1, limit: Optional[int] = None
     ) -> tuple[List[ComicRow], int]:
         """Scrape the full SMBC archive through the latest discovered legacy ID."""
         if start_id < 1:
             raise ValueError("start_id must be >= 1")
 
         latest_legacy_id = await self.discover_latest_legacy_id()
-        rows = await self.scrape_id_range(start_id, latest_legacy_id)
+        end_id = (
+            min(start_id + limit - 1, latest_legacy_id)
+            if limit
+            else latest_legacy_id
+        )
+        rows = await self.scrape_id_range(start_id, end_id)
         return rows, latest_legacy_id
 
     async def scrape_id_range(self, start_id: int, end_id: int) -> List[ComicRow]:
@@ -471,7 +663,7 @@ class SmbcScraper:
             return 0
 
         parsed_row, images_to_download = self._parse_page(
-            str(response.url), response.text
+            str(response.url), response.text, legacy_id=row.legacy_id
         )
         if not parsed_row:
             logger.warning(

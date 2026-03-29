@@ -3,12 +3,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import csv
+import datetime
 import json
 import mimetypes
 import os
 import re
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
@@ -46,7 +46,7 @@ Rules:
 class VisionAnalysisRow(BaseModel):
     slug: str
     comic_url: Optional[str] = None
-    date: Optional[date] = None
+    date: Optional[datetime.date] = None
     page_title: Optional[str] = None
     image_kind: str
     image_path: str
@@ -76,7 +76,7 @@ class ImageWorkItem:
     image_path: Path
     relative_image_path: str
     comic_url: Optional[str] = None
-    comic_date: Optional[date] = None
+    comic_date: Optional[datetime.date] = None
     page_title: Optional[str] = None
 
 
@@ -121,11 +121,11 @@ def encode_image_as_data_url(image_path: Path) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def _parse_date(value: str | None) -> Optional[date]:
+def _parse_date(value: str | None) -> Optional[datetime.date]:
     if not value:
         return None
     try:
-        return date.fromisoformat(value)
+        return datetime.date.fromisoformat(value)
     except ValueError:
         logger.warning(f"Could not parse date value '{value}' from source CSV.")
         return None
@@ -253,7 +253,7 @@ class OpenRouterVisionClient:
         self,
         api_key: str,
         model: str = DEFAULT_OPENROUTER_MODEL,
-        rate_limit: float = 1.0,
+        rate_limit: float = 10.0,
         timeout: float = 60.0,
         site_url: Optional[str] = None,
         site_title: str = "smbc_scraper",

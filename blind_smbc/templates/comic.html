@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}SMBC Comic: {{ comic.slug }} ({{ comic.date }}) - SMBC for the Blind{% endblock %}
+
+{% block content %}
+<article>
+    <header>
+        <h1>Comic Date: {{ comic.date }}</h1>
+        <p class="comic-meta">Slug: {{ comic.slug }}</p>
+    </header>
+
+    <nav aria-label="Comic Navigation">
+        <ul>
+            {% if prev_slug %}
+            <li><a id="nav-prev" href="/comics/{{ prev_slug }}.html?focus=prev">Previous</a></li>
+            {% endif %}
+            {% if random_slug %}
+            <li><a id="nav-random" href="/comics/{{ random_slug }}.html?focus=random">Random</a></li>
+            {% endif %}
+            {% if next_slug %}
+            <li><a id="nav-next" href="/comics/{{ next_slug }}.html?focus=next">Next</a></li>
+            {% endif %}
+        </ul>
+    </nav>
+
+    <script>
+        // Simple focus management for screen-reader efficiency
+        window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const focus = params.get('focus');
+            
+            let target;
+            if (focus === 'random') {
+                target = document.getElementById('nav-random');
+            } else if (focus === 'next') {
+                target = document.getElementById('nav-next');
+            } else {
+                // Default to previous for back-navigation efficiency
+                target = document.getElementById('nav-prev');
+            }
+            
+            if (target) {
+                target.focus();
+            }
+        });
+    </script>
+
+    <section id="transcript" aria-labelledby="transcript-heading">
+        <h2 id="transcript-heading">Comic Transcript</h2>
+        <div class="transcript-box">
+            {{ comic.comic_text if comic.comic_text else "No transcript available yet." }}
+        </div>
+    </section>
+
+    {% if comic.votey_text %}
+    <section id="votey-text" aria-labelledby="votey-heading">
+        <h2 id="votey-heading">Votey (Bonus Panel)</h2>
+        <p>{{ comic.votey_text }}</p>
+        <p class="comic-meta">The "votey" is a hidden bonus panel that appears when you click the red button on the original site.</p>
+    </section>
+    {% endif %}
+
+    {% if comic.hover_text and not is_date(comic.hover_text) %}
+    <section id="hover-text" aria-labelledby="hover-heading">
+        <h2 id="hover-heading">Hover Text</h2>
+        <p>{{ comic.hover_text }}</p>
+    </section>
+    {% endif %}
+
+    {% if comic.description %}
+    <section id="ai-description" aria-labelledby="ai-heading">
+        <h2 id="ai-heading">Visual Description</h2>
+        <p>{{ comic.description }}</p>
+    </section>
+    {% endif %}
+
+    <p style="margin-top: 2rem;">
+        <a href="https://www.smbc-comics.com/comic/{{ comic.slug }}">View original comic on smbc-comics.com</a>
+    </p>
+</article>
+{% endblock %}

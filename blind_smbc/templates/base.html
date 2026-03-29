@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}SMBC for the Blind{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <header>
+        <nav aria-label="Main Navigation">
+            <ul>
+                <li><a href="/index.html">Latest</a></li>
+                <li><a href="/search.html">Search</a></li>
+                <li><a href="/about.html">About</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main id="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer>
+        <p>SMBC transformation by Matthew Martin. Comics &copy; Zach Weinersmith. <a href="https://www.smbc-comics.com">Original</a> | <a href="https://www.patreon.com/ZachWeinersmith">Patreon</a></p>
+    </footer>
+</body>
+</html>
