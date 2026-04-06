@@ -1,3 +1,8 @@
+ifneq (,$(wildcard ./.env))
+    include .env
+    export
+endif
+
 PYTHON ?= uv run
 SCRAPER := $(PYTHON) smbc-scrape
 LOG_LEVEL ?= INFO
@@ -7,7 +12,7 @@ DATA_DIR ?= data
 CACHE_DIR ?= .cache
 DOCS_FILES := README.md docs
 
-.PHONY: help sync test lint mypy ty check docs docs-build docs-serve format-md spellcheck smbc smbc-all smbc-fill-in-missing smbc-rebuild smbc-update smbc-images wiki ohnorobot ocr web-gen web-clean web-serve web-open
+.PHONY: help sync test lint mypy ty check docs docs-build docs-serve format-md spellcheck smbc smbc-all smbc-fill-in-missing smbc-rebuild smbc-update smbc-images wiki ohnorobot ocr ocr-multi ocr-gold web-gen web-clean web-serve web-open
 
 help:
 	@echo "Targets:"
@@ -30,6 +35,8 @@ help:
 	@echo "  make wiki START_ID=1 END_ID=7645"
 	@echo "  make ohnorobot LIMIT=100"
 	@echo "  make ocr"
+	@echo "  make ocr-multi MODELS='model1 model2'  - OCR with multiple models → variants CSV"
+	@echo "  make ocr-gold [GOLD_MODEL=...]          - Synthesise gold from variants CSV"
 	@echo "  make web-gen          - Generate the accessible static site"
 	@echo "  make web-clean        - Remove the generated static site"
 	@echo "  make web-serve        - Serve the generated site locally"
@@ -92,6 +99,14 @@ ohnorobot:
 
 ocr:
 	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" ocr
+
+# MODELS="google/gemini-2.5-flash-lite anthropic/claude-3.5-haiku" make ocr-multi
+ocr-multi:
+	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" ocr-multi --models $(MODELS) $(if $(LIMIT),--limit "$(LIMIT)",) $(if $(CONCURRENCY),--concurrency "$(CONCURRENCY)",)
+
+# GOLD_MODEL="google/gemini-2.5-flash" make ocr-gold
+ocr-gold:
+	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" ocr-gold $(if $(GOLD_MODEL),--model "$(GOLD_MODEL)",) $(if $(LIMIT),--limit "$(LIMIT)",) $(if $(CONCURRENCY),--concurrency "$(CONCURRENCY)",)
 
 web-gen:
 	cd blind_smbc && $(PYTHON) python generator.py

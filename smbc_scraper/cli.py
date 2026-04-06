@@ -7,6 +7,7 @@ import asyncio
 from datetime import date, datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
 from loguru import logger
 from rich.console import Console
 
@@ -16,6 +17,8 @@ from smbc_scraper.export import load_comics, merge_comics, save_comics
 from smbc_scraper.sources.ohnorobot import OhNoRobotScraper
 from smbc_scraper.sources.openrouter_vision import (
     DEFAULT_OPENROUTER_MODEL,
+    GoldSynthesiser,
+    MultiModelVisionScraper,
     OpenRouterVisionClient,
     OpenRouterVisionScraper,
     get_openrouter_api_key,
@@ -248,7 +251,56 @@ async def run_ocr(args: argparse.Namespace):
         await client.close()
 
 
+async def run_ocr_multi(args: argparse.Namespace):
+    """Handler for the 'ocr-multi' subcommand."""
+    console.print("[bold yellow]Starting multi-model OCR via OpenRouter[/bold yellow]")
+    source_csv = args.source_csv or (args.output_dir / "smbc_ground_truth.csv")
+    scraper = MultiModelVisionScraper(
+        api_key=get_openrouter_api_key(),
+        models=args.models,
+        output_dir=args.output_dir,
+        data_dir=args.data_dir,
+        source_csv_path=source_csv,
+        output_name=args.output_name,
+        rate_limit=args.max_rate,
+    )
+    results = await scraper.scrape(
+        limit=args.limit,
+        overwrite=args.overwrite,
+        concurrency=args.concurrency,
+    )
+    console.print(f"[bold green]Processed {len(results)} image(s) across {len(args.models)} model(s).[/bold green]")
+
+
+async def run_ocr_gold(args: argparse.Namespace):
+    """Handler for the 'ocr-gold' subcommand."""
+    console.print("[bold yellow]Starting gold synthesis via OpenRouter[/bold yellow]")
+    source_csv = args.source_csv or (args.output_dir / "smbc_ground_truth.csv")
+    variants_csv = args.variants_csv or (args.output_dir / "smbc_vision_variants.csv")
+    client = OpenRouterVisionClient(
+        api_key=get_openrouter_api_key(),
+        model=args.model,
+        rate_limit=args.max_rate,
+    )
+    try:
+        synthesiser = GoldSynthesiser(
+            client=client,
+            output_dir=args.output_dir,
+            output_name=args.output_name,
+        )
+        results = await synthesiser.synthesise(
+            variants_csv=variants_csv,
+            limit=args.limit,
+            overwrite=args.overwrite,
+            concurrency=args.concurrency,
+        )
+        console.print(f"[bold green]Gold synthesis complete: {len(results)} row(s).[/bold green]")
+    finally:
+        await client.close()
+
+
 def main():
+    load_dotenv()
     parser = argparse.ArgumentParser(
         description="Scrape SMBC comics from multiple sources."
     )
@@ -472,6 +524,93 @@ def main():
         help="Reprocess images even if they already exist in the output CSV.",
     )
     ocr_parser.set_defaults(func=run_ocr)
+
+    # Subcommand: ocr-multi — run OCR across multiple models
+    ocr_multi_parser = subparsers.add_parser(
+        "ocr-multi",
+        help="Run OCR across multiple OpenRouter models; accumulate in one variants CSV.",
+    )
+    ocr_multi_parser.add_argument(
+        "--models",
+        nargs="+",
+        required=True,
+        help="One or more OpenRouter model IDs to use for OCR.",
+    )
+    ocr_multi_parser.add_argument(
+        "--source-csv",
+        type=Path,
+        default=None,
+        help="CSV file used to enrich OCR output with comic metadata.",
+    )
+    ocr_multi_parser.add_argument(
+        "--output-name",
+        default="smbc_vision_variants",
+        help="Base filename for the variants CSV inside the output directory.",
+    )
+    ocr_multi_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional cap on images processed per model.",
+    )
+    ocr_multi_parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Number of images to analyze concurrently per model.",
+    )
+    ocr_multi_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Reprocess (image_path, model) pairs already in the variants CSV.",
+    )
+    ocr_multi_parser.set_defaults(func=run_ocr_multi)
+
+    # Subcommand: ocr-gold — synthesise gold record from variants
+    ocr_gold_parser = subparsers.add_parser(
+        "ocr-gold",
+        help="Synthesise a gold OCR+description record from multi-model variants.",
+    )
+    ocr_gold_parser.add_argument(
+        "--variants-csv",
+        type=Path,
+        default=None,
+        help="Variants CSV to read (default: out/smbc_vision_variants.csv).",
+    )
+    ocr_gold_parser.add_argument(
+        "--model",
+        default=DEFAULT_OPENROUTER_MODEL,
+        help="OpenRouter model used for synthesis.",
+    )
+    ocr_gold_parser.add_argument(
+        "--source-csv",
+        type=Path,
+        default=None,
+        help="Metadata CSV (currently unused but reserved for future enrichment).",
+    )
+    ocr_gold_parser.add_argument(
+        "--output-name",
+        default="smbc_vision_gold",
+        help="Base filename for the gold CSV inside the output directory.",
+    )
+    ocr_gold_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional cap on number of comic images to synthesise.",
+    )
+    ocr_gold_parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Number of synthesis calls to make concurrently.",
+    )
+    ocr_gold_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Re-synthesise (slug, image_kind) pairs already in the gold CSV.",
+    )
+    ocr_gold_parser.set_defaults(func=run_ocr_gold)
 
     args = parser.parse_args()
 

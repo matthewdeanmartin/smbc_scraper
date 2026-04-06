@@ -3,11 +3,14 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader
 
 # Configuration
-DATA_PATH = Path("../gold_data/smbc_ground_truth.csv")
+DATA_PATH_GOLD = Path("../gold_data/smbc_ground_truth.csv")
+DATA_PATH_OUT = Path("../out/smbc_ground_truth.csv")
+VARIANTS_PATH = Path("../out/smbc_vision_variants.csv")
 OUTPUT_DIR = Path("./dist")
 TEMPLATES_DIR = Path("./templates")
 STATIC_DIR = Path("./static")
@@ -22,9 +25,11 @@ def setup_directories():
     shutil.copy(STATIC_DIR / "style.css", OUTPUT_DIR / "static" / "style.css")
 
 def load_data():
-    """Load comic data from CSV."""
-    if not DATA_PATH.exists():
-        print(f"Data not found at {DATA_PATH}. Using mock data.")
+    """Load comic data from CSV, merging in vision descriptions if available."""
+    data_path = DATA_PATH_OUT if DATA_PATH_OUT.exists() else DATA_PATH_GOLD
+    
+    if not data_path.exists():
+        print(f"Data not found at {data_path}. Using mock data.")
         return pd.DataFrame([
             {
                 "slug": "2023-10-01",
@@ -35,8 +40,63 @@ def load_data():
             }
         ])
 
-    df = pd.read_csv(DATA_PATH)
-    # Replace NaN with empty string for Jinja2
+    print(f"Loading base data from {data_path}")
+    df = pd.read_csv(data_path)
+    
+    # If we have vision variants, merge them in
+    if VARIANTS_PATH.exists():
+        print(f"Incorporating vision descriptions from {VARIANTS_PATH}")
+        vdf = pd.read_csv(VARIANTS_PATH)
+        
+        # We might have multiple variants (different models) per slug/image_kind
+        # Pick the 'best' one for each slug. For simplicity, we'll take the 
+        # main image's description and pick the one with the longest accessibility_description.
+        vdf = vdf[vdf['image_kind'] == 'main'].copy()
+        
+        # Fill NaN to avoid errors during string operations
+        vdf['accessibility_description'] = vdf['accessibility_description'].fillna('')
+        vdf['ocr_text'] = vdf['ocr_text'].fillna('')
+        
+        # Pick the variant with the most content
+        vdf['content_len'] = vdf['accessibility_description'].str.len() + vdf['ocr_text'].str.len()
+        best_variants = vdf.sort_values('content_len', ascending=False).drop_duplicates('slug')
+        
+        # Create a mapping from slug to description
+        def combine_desc(row):
+            parts = []
+            if row['accessibility_description']:
+                parts.append(f"Description: {row['accessibility_description']}")
+            if row['ocr_text']:
+                parts.append(f"OCR: {row['ocr_text']}")
+            return "\n\n".join(parts)
+            
+        best_variants['vision_text'] = best_variants.apply(combine_desc, axis=1)
+        vision_map = best_variants.set_index('slug')['vision_text'].to_dict()
+        
+        # Update comic_text if it's empty in the base data
+        def update_text(row):
+            current = str(row.get('comic_text', ''))
+            if (not current or current.lower() == 'nan') and row['slug'] in vision_map:
+                return vision_map[row['slug']]
+            return current
+            
+        df['comic_text'] = df.apply(update_text, axis=1)
+
+    # Filter for comics with OCR/descriptions (comic_text)
+    # This fulfills the request to only generate pages for items with descriptions.
+    initial_count = len(df)
+    
+    # Ensure comic_text is string and handle NaN
+    df['comic_text'] = df['comic_text'].fillna('').astype(str)
+    df = df[df['comic_text'].str.strip() != ""]
+    df = df[df['comic_text'].str.lower() != "nan"]
+    
+    filtered_count = len(df)
+    
+    if filtered_count < initial_count:
+        print(f"Filtered {initial_count - filtered_count} comics without descriptions. {filtered_count} remaining.")
+
+    # Replace remaining NaN with empty string for Jinja2
     df = df.fillna('')
     # Sort by date descending
     df['date_dt'] = pd.to_datetime(df['date'], errors='coerce')
@@ -166,4 +226,5 @@ def generate_site():
     print(f"Done! Site generated in {OUTPUT_DIR}")
 
 if __name__ == "__main__":
+    load_dotenv()
     generate_site()
