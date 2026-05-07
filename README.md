@@ -25,6 +25,8 @@ Common workflows:
   `uv run smbc-scrape smbc-images --output-dir out --data-dir data`
 - OCR saved comic images with OpenRouter:
   `uv run smbc-scrape ocr --data-dir data --output-dir out`
+- Build website-safe comic scripts from vision variants:
+  `uv run smbc-scrape ocr-stageplay --variants-csv out\smbc_vision_variants.csv`
 
 Use `--max-rate` to stay polite with the site.
 

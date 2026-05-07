@@ -21,6 +21,7 @@ from smbc_scraper.sources.openrouter_vision import (
     MultiModelVisionScraper,
     OpenRouterVisionClient,
     OpenRouterVisionScraper,
+    StageplaySynthesiser,
     get_openrouter_api_key,
 )
 from smbc_scraper.sources.smbc import (
@@ -269,13 +270,16 @@ async def run_ocr_multi(args: argparse.Namespace):
         overwrite=args.overwrite,
         concurrency=args.concurrency,
     )
-    console.print(f"[bold green]Processed {len(results)} image(s) across {len(args.models)} model(s).[/bold green]")
+    console.print(
+        "[bold green]Processed "
+        f"{len(results)} image(s) across {len(args.models)} model(s)."
+        "[/bold green]"
+    )
 
 
 async def run_ocr_gold(args: argparse.Namespace):
     """Handler for the 'ocr-gold' subcommand."""
     console.print("[bold yellow]Starting gold synthesis via OpenRouter[/bold yellow]")
-    source_csv = args.source_csv or (args.output_dir / "smbc_ground_truth.csv")
     variants_csv = args.variants_csv or (args.output_dir / "smbc_vision_variants.csv")
     client = OpenRouterVisionClient(
         api_key=get_openrouter_api_key(),
@@ -294,7 +298,40 @@ async def run_ocr_gold(args: argparse.Namespace):
             overwrite=args.overwrite,
             concurrency=args.concurrency,
         )
-        console.print(f"[bold green]Gold synthesis complete: {len(results)} row(s).[/bold green]")
+        console.print(
+            f"[bold green]Gold synthesis complete: {len(results)} row(s).[/bold green]"
+        )
+    finally:
+        await client.close()
+
+
+async def run_ocr_stageplay(args: argparse.Namespace):
+    """Handler for the 'ocr-stageplay' subcommand."""
+    console.print(
+        "[bold yellow]Starting stageplay synthesis via OpenRouter[/bold yellow]"
+    )
+    variants_csv = args.variants_csv or (args.output_dir / "smbc_vision_variants.csv")
+    client = OpenRouterVisionClient(
+        api_key=get_openrouter_api_key(),
+        model=args.model,
+        rate_limit=args.max_rate,
+    )
+    try:
+        synthesiser = StageplaySynthesiser(
+            client=client,
+            output_dir=args.output_dir,
+            output_name=args.output_name,
+        )
+        results = await synthesiser.synthesise(
+            variants_csv=variants_csv,
+            limit=args.limit,
+            overwrite=args.overwrite,
+            concurrency=args.concurrency,
+        )
+        console.print(
+            "[bold green]Stageplay synthesis complete: "
+            f"{len(results)} row(s).[/bold green]"
+        )
     finally:
         await client.close()
 
@@ -528,7 +565,10 @@ def main():
     # Subcommand: ocr-multi — run OCR across multiple models
     ocr_multi_parser = subparsers.add_parser(
         "ocr-multi",
-        help="Run OCR across multiple OpenRouter models; accumulate in one variants CSV.",
+        help=(
+            "Run OCR across multiple OpenRouter models; accumulate in one "
+            "variants CSV."
+        ),
     )
     ocr_multi_parser.add_argument(
         "--models",
@@ -611,6 +651,46 @@ def main():
         help="Re-synthesise (slug, image_kind) pairs already in the gold CSV.",
     )
     ocr_gold_parser.set_defaults(func=run_ocr_gold)
+
+    # Subcommand: ocr-stageplay — create website-safe script text from variants
+    ocr_stageplay_parser = subparsers.add_parser(
+        "ocr-stageplay",
+        help="Synthesise a stageplay script plus text diagnostics from variants.",
+    )
+    ocr_stageplay_parser.add_argument(
+        "--variants-csv",
+        type=Path,
+        default=None,
+        help="Variants CSV to read (default: out/smbc_vision_variants.csv).",
+    )
+    ocr_stageplay_parser.add_argument(
+        "--model",
+        default=DEFAULT_OPENROUTER_MODEL,
+        help="OpenRouter model used for stageplay synthesis.",
+    )
+    ocr_stageplay_parser.add_argument(
+        "--output-name",
+        default="smbc_vision_stageplay",
+        help="Base filename for the stageplay CSV inside the output directory.",
+    )
+    ocr_stageplay_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional cap on number of comic images to synthesise.",
+    )
+    ocr_stageplay_parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Number of synthesis calls to make concurrently.",
+    )
+    ocr_stageplay_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Re-synthesise (slug, image_kind) pairs already in the stageplay CSV.",
+    )
+    ocr_stageplay_parser.set_defaults(func=run_ocr_stageplay)
 
     args = parser.parse_args()
 

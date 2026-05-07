@@ -27,8 +27,18 @@ _SECTION_RE = re.compile(
     r"^(OCR_TEXT|SHORT_DESCRIPTION|ACCESSIBILITY_DESCRIPTION):\s*",
     re.IGNORECASE,
 )
-# Known section labels in order
-_SECTION_KEYS = ("OCR_TEXT", "SHORT_DESCRIPTION", "ACCESSIBILITY_DESCRIPTION")
+_GOLD_SECTION_RE = re.compile(
+    r"^(GOLD_OCR_TEXT|GOLD_SHORT_DESCRIPTION|GOLD_ACCESSIBILITY_DESCRIPTION):\s*",
+    re.IGNORECASE,
+)
+_STAGEPLAY_SECTION_RE = re.compile(
+    r"^("
+    r"STAGEPLAY_SCRIPT|"
+    r"DIAGNOSTIC_OCR_TEXT|"
+    r"DIAGNOSTIC_ACCESSIBILITY_DESCRIPTION"
+    r"):\s*",
+    re.IGNORECASE,
+)
 
 VISION_PROMPT = """You are extracting accessibility metadata from a comic image.
 Respond with exactly three labeled sections in this order, nothing else:
@@ -87,6 +97,29 @@ class ImageWorkItem:
     page_title: Optional[str] = None
 
 
+def _parse_labeled_sections(text: str, section_re: re.Pattern[str]) -> dict[str, str]:
+    sections: dict[str, list[str]] = {}
+    current_key: str | None = None
+
+    for line in text.splitlines():
+        match = section_re.match(line)
+        if match:
+            current_key = match.group(1).upper()
+            sections.setdefault(current_key, [])
+            remainder = line[match.end() :]
+            if remainder:
+                sections[current_key].append(remainder)
+        elif current_key is not None:
+            sections[current_key].append(line)
+
+    parsed: dict[str, str] = {}
+    for key, lines in sections.items():
+        while lines and not lines[-1].strip():
+            lines.pop()
+        parsed[key] = "\n".join(lines).strip()
+    return parsed
+
+
 def parse_vision_response(text: str) -> VisionResult:
     """Parse a labeled-section model response into a VisionResult.
 
@@ -104,28 +137,7 @@ def parse_vision_response(text: str) -> VisionResult:
     Text between two section headers belongs to the first header.
     Any content before the first recognized header is discarded.
     """
-    sections: dict[str, list[str]] = {}
-    current_key: str | None = None
-
-    for line in text.splitlines():
-        m = _SECTION_RE.match(line)
-        if m:
-            current_key = m.group(1).upper()
-            sections.setdefault(current_key, [])
-            # Inline content after the label (e.g. "OCR_TEXT: some text")
-            remainder = line[m.end() :]
-            if remainder:
-                sections[current_key].append(remainder)
-        elif current_key is not None:
-            sections[current_key].append(line)
-
-    def _get(key: str) -> str:
-        lines = sections.get(key, [])
-        # Strip trailing blank lines
-        while lines and not lines[-1].strip():
-            lines.pop()
-        return "\n".join(lines).strip()
-
+    sections = _parse_labeled_sections(text, _SECTION_RE)
     if not sections:
         raise ValueError(
             f"Model response contained no recognized section headers. "
@@ -133,9 +145,9 @@ def parse_vision_response(text: str) -> VisionResult:
         )
 
     return VisionResult(
-        ocr_text=_get("OCR_TEXT"),
-        short_description=_get("SHORT_DESCRIPTION"),
-        accessibility_description=_get("ACCESSIBILITY_DESCRIPTION"),
+        ocr_text=sections.get("OCR_TEXT", ""),
+        short_description=sections.get("SHORT_DESCRIPTION", ""),
+        accessibility_description=sections.get("ACCESSIBILITY_DESCRIPTION", ""),
     )
 
 
@@ -737,12 +749,6 @@ Rules:
 Variants:
 """
 
-_GOLD_SECTION_RE = re.compile(
-    r"^(GOLD_OCR_TEXT|GOLD_SHORT_DESCRIPTION|GOLD_ACCESSIBILITY_DESCRIPTION):\s*",
-    re.IGNORECASE,
-)
-
-
 class GoldRow(BaseModel):
     slug: str
     image_kind: str
@@ -770,26 +776,7 @@ class GoldResult(BaseModel):
 
 def parse_gold_response(text: str) -> GoldResult:
     """Parse a labeled-section gold synthesis response."""
-    sections: dict[str, list[str]] = {}
-    current_key: str | None = None
-
-    for line in text.splitlines():
-        m = _GOLD_SECTION_RE.match(line)
-        if m:
-            current_key = m.group(1).upper()
-            sections.setdefault(current_key, [])
-            remainder = line[m.end() :]
-            if remainder:
-                sections[current_key].append(remainder)
-        elif current_key is not None:
-            sections[current_key].append(line)
-
-    def _get(key: str) -> str:
-        lines = sections.get(key, [])
-        while lines and not lines[-1].strip():
-            lines.pop()
-        return "\n".join(lines).strip()
-
+    sections = _parse_labeled_sections(text, _GOLD_SECTION_RE)
     if not sections:
         raise ValueError(
             f"Gold response contained no recognized section headers. "
@@ -797,9 +784,11 @@ def parse_gold_response(text: str) -> GoldResult:
         )
 
     return GoldResult(
-        gold_ocr_text=_get("GOLD_OCR_TEXT"),
-        gold_short_description=_get("GOLD_SHORT_DESCRIPTION"),
-        gold_accessibility_description=_get("GOLD_ACCESSIBILITY_DESCRIPTION"),
+        gold_ocr_text=sections.get("GOLD_OCR_TEXT", ""),
+        gold_short_description=sections.get("GOLD_SHORT_DESCRIPTION", ""),
+        gold_accessibility_description=sections.get(
+            "GOLD_ACCESSIBILITY_DESCRIPTION", ""
+        ),
     )
 
 
@@ -881,6 +870,280 @@ def append_gold_rows(rows: list[GoldRow], output_csv_path: Path) -> None:
             writer.writerow(row.model_dump())
 
     logger.info(f"Appended {len(rows)} gold rows to {output_csv_path}")
+
+
+STAGEPLAY_SYNTHESIS_PROMPT_HEADER = """You are turning OCR and accessibility notes for a comic into website-safe text.
+You have been given OCR and description variants from multiple AI models.
+Produce a stageplay-like script for blind readers, then provide cleaned diagnostics.
+
+Respond with exactly three labeled sections in this order, nothing else:
+
+STAGEPLAY_SCRIPT:
+<panel-by-panel or beat-by-beat script with speaker names/actions when supported by the evidence; no URLs, site branding, or author credits>
+
+DIAGNOSTIC_OCR_TEXT:
+<best OCR of visible comic text after removing URLs, site branding, and author credits; preserve line breaks; empty if none>
+
+DIAGNOSTIC_ACCESSIBILITY_DESCRIPTION:
+<best scene description after removing URLs, site branding, and author credits; no invented details>
+
+Rules:
+- Use the section labels exactly as shown.
+- Do not add any other text or formatting.
+- Do not invent dialogue, speakers, or details that are not supported by the variants.
+- Remove visible or inferred site branding, URLs, signatures, and author-credit text such as "smbc-comics.com" and "Zach Weinersmith".
+- Keep the stageplay script website-safe and focused on the comic itself.
+
+Variants:
+"""
+
+
+class StageplayRow(BaseModel):
+    slug: str
+    image_kind: str
+    image_path: str
+    comic_url: Optional[str] = None
+    date: Optional[datetime.date] = None
+    page_title: Optional[str] = None
+    stageplay_script: str
+    diagnostic_ocr_text: str
+    diagnostic_accessibility_description: str
+    models_used: str
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+
+
+class StageplayResult(BaseModel):
+    stageplay_script: str
+    diagnostic_ocr_text: str
+    diagnostic_accessibility_description: str
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+
+
+def parse_stageplay_response(text: str) -> StageplayResult:
+    """Parse a labeled-section stageplay synthesis response."""
+    sections = _parse_labeled_sections(text, _STAGEPLAY_SECTION_RE)
+    if not sections:
+        raise ValueError(
+            f"Stageplay response contained no recognized section headers. "
+            f"Raw response (first 500 chars): {text[:500]!r}"
+        )
+
+    return StageplayResult(
+        stageplay_script=sections.get("STAGEPLAY_SCRIPT", ""),
+        diagnostic_ocr_text=sections.get("DIAGNOSTIC_OCR_TEXT", ""),
+        diagnostic_accessibility_description=sections.get(
+            "DIAGNOSTIC_ACCESSIBILITY_DESCRIPTION", ""
+        ),
+    )
+
+
+def build_stageplay_prompt(variants: list[VisionAnalysisRow]) -> str:
+    parts = [STAGEPLAY_SYNTHESIS_PROMPT_HEADER]
+    for variant in variants:
+        parts.append(f"<MODEL: {variant.model}>")
+        parts.append(f"ocr_text: {variant.ocr_text}")
+        parts.append(f"short_description: {variant.short_description}")
+        parts.append(
+            f"accessibility_description: {variant.accessibility_description}"
+        )
+        parts.append("")
+    return "\n".join(parts)
+
+
+def load_completed_stageplay_pairs(output_csv_path: Path) -> set[tuple[str, str]]:
+    """Return set of (slug, image_kind) pairs already present in stageplay CSV."""
+    if not output_csv_path.exists():
+        return set()
+
+    with output_csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        pairs: set[tuple[str, str]] = set()
+        for row in reader:
+            slug = (row.get("slug") or "").strip()
+            image_kind = (row.get("image_kind") or "").strip()
+            if slug and image_kind:
+                pairs.add((slug, image_kind))
+    return pairs
+
+
+def append_stageplay_rows(rows: list[StageplayRow], output_csv_path: Path) -> None:
+    if not rows:
+        return
+
+    output_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(StageplayRow.model_fields)
+    file_exists = output_csv_path.exists()
+
+    with output_csv_path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        for row in rows:
+            writer.writerow(row.model_dump())
+
+    logger.info(f"Appended {len(rows)} stageplay rows to {output_csv_path}")
+
+
+class StageplaySynthesiser:
+    """Turns OCR/description variants into a cleaned stageplay script."""
+
+    def __init__(
+        self,
+        client: OpenRouterVisionClient,
+        output_dir: Path,
+        output_name: str = "smbc_vision_stageplay",
+    ):
+        self.client = client
+        self.output_dir = output_dir
+        self.output_name = output_name
+
+    async def synthesise(
+        self,
+        variants_csv: Path,
+        limit: Optional[int] = None,
+        overwrite: bool = False,
+        concurrency: int = 1,
+    ) -> list[StageplayRow]:
+        all_variants = load_variants(variants_csv)
+
+        groups: dict[tuple[str, str], list[VisionAnalysisRow]] = {}
+        for variant in all_variants:
+            key = (variant.slug, variant.image_kind)
+            groups.setdefault(key, []).append(variant)
+
+        output_csv = self.output_dir / f"{self.output_name}.csv"
+        done_pairs: set[tuple[str, str]] = set()
+        if not overwrite:
+            done_pairs = load_completed_stageplay_pairs(output_csv)
+
+        pending = [
+            (key, variants)
+            for key, variants in sorted(groups.items())
+            if key not in done_pairs
+        ]
+        if limit is not None:
+            pending = pending[:limit]
+
+        if not pending:
+            logger.info("No new comic images require stageplay synthesis.")
+            return []
+
+        logger.info(f"Synthesising stageplay text for {len(pending)} comic images.")
+        sem = asyncio.Semaphore(concurrency)
+        results: list[StageplayRow] = []
+        consecutive_errors = 0
+        error_threshold = 50
+        stop_event = asyncio.Event()
+
+        async def synthesise_group(
+            key: tuple[str, str],
+            variants: list[VisionAnalysisRow],
+            progress: Progress,
+            task_id: Any,
+        ) -> Optional[StageplayRow]:
+            if stop_event.is_set():
+                return None
+
+            async with sem:
+                if stop_event.is_set():
+                    return None
+
+                slug, image_kind = key
+                label = f"{slug}/{image_kind}"
+                progress.update(task_id, description=f"[cyan]stageplay · {label}")
+                logger.debug(
+                    f"Synthesising stageplay for {label} from "
+                    f"{len(variants)} variant(s)"
+                )
+                prompt = build_stageplay_prompt(variants)
+                try:
+                    await self.client.rate_limiter.wait()
+                    req_payload = {
+                        "model": self.client.model,
+                        "max_tokens": 1200,
+                        "temperature": 0,
+                        "messages": [{"role": "user", "content": prompt}],
+                    }
+                    response = await self.client.client.post(
+                        "/chat/completions", json=req_payload
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    message = data["choices"][0]["message"]
+                    raw_text = OpenRouterVisionClient._extract_message_text(
+                        message.get("content")
+                    )
+                    try:
+                        stageplay = parse_stageplay_response(raw_text)
+                    except ValueError:
+                        logger.error(
+                            f"Failed to parse stageplay response for {label}.\n"
+                            f"Raw response:\n{raw_text}"
+                        )
+                        progress.update(task_id, advance=1)
+                        return None
+                    usage = data.get("usage", {})
+                    sample = variants[0]
+                    row = StageplayRow(
+                        slug=slug,
+                        image_kind=image_kind,
+                        image_path=sample.image_path,
+                        comic_url=sample.comic_url,
+                        date=sample.date,
+                        page_title=sample.page_title,
+                        stageplay_script=stageplay.stageplay_script,
+                        diagnostic_ocr_text=stageplay.diagnostic_ocr_text,
+                        diagnostic_accessibility_description=(
+                            stageplay.diagnostic_accessibility_description
+                        ),
+                        models_used=",".join(
+                            sorted({variant.model for variant in variants})
+                        ),
+                        prompt_tokens=usage.get("prompt_tokens"),
+                        completion_tokens=usage.get("completion_tokens"),
+                        total_tokens=usage.get("total_tokens"),
+                    )
+                    append_stageplay_rows([row], output_csv)
+                    logger.info(
+                        f"[stageplay] {label} OK "
+                        f"(tokens: {usage.get('total_tokens')}) — "
+                        f"{stageplay.stageplay_script[:80]}"
+                    )
+                    progress.update(task_id, advance=1)
+                    return row
+                except Exception as exc:
+                    logger.error(f"Stageplay synthesis failed for {label}: {exc}")
+                    progress.update(task_id, advance=1)
+                    return None
+
+        with Progress() as progress:
+            task_id = progress.add_task(
+                "[cyan]Stageplay synthesis...", total=len(pending)
+            )
+            coros = [
+                synthesise_group(key, variants, progress, task_id)
+                for key, variants in pending
+            ]
+            for future in asyncio.as_completed(coros):
+                result = await future
+                if result is None:
+                    if not stop_event.is_set():
+                        consecutive_errors += 1
+                        if consecutive_errors >= error_threshold:
+                            logger.error(
+                                f"Hit {error_threshold} consecutive stageplay "
+                                "synthesis errors. Stopping."
+                            )
+                            stop_event.set()
+                else:
+                    consecutive_errors = 0
+                    results.append(result)
+
+        return results
 
 
 class GoldSynthesiser:

@@ -46,10 +46,15 @@
     </script>
 
     <section id="transcript" aria-labelledby="transcript-heading">
-        <h2 id="transcript-heading">Comic Transcript</h2>
+        <h2 id="transcript-heading">Comic Script</h2>
         <div class="transcript-box">
             {{ comic.comic_text if comic.comic_text else "No transcript available yet." }}
         </div>
+        {% if comic.text_diagnostics_url %}
+        <p class="section-link-row">
+            <a href="{{ comic.text_diagnostics_url }}">Text diagnostics</a>
+        </p>
+        {% endif %}
     </section>
 
     {% if comic.votey_text %}

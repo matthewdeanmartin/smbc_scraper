@@ -9,14 +9,18 @@ from smbc_scraper.sources.openrouter_vision import (
     GoldRow,
     MultiModelVisionScraper,
     OpenRouterVisionClient,
+    StageplayRow,
     VisionAnalysisRow,
+    build_stageplay_prompt,
     append_vision_rows,
     build_image_work_items,
     build_synthesis_prompt,
     encode_image_as_data_url,
     load_completed_gold_pairs,
+    load_completed_stageplay_pairs,
     load_completed_variant_pairs,
     parse_gold_response,
+    parse_stageplay_response,
     parse_vision_response,
 )
 
@@ -37,8 +41,10 @@ def png_bytes() -> bytes:
 
 
 class DummyResponse:
-    def __init__(self, payload: dict):
+    def __init__(self, payload: dict, status_code: int = 200, text: str = ""):
         self._payload = payload
+        self.status_code = status_code
+        self.text = text
 
     def raise_for_status(self) -> None:
         return None
@@ -174,6 +180,28 @@ def test_parse_gold_response_error_includes_raw_text() -> None:
 
 
 # ---------------------------------------------------------------------------
+# parse_stageplay_response
+# ---------------------------------------------------------------------------
+
+
+def test_parse_stageplay_response_happy_path() -> None:
+    text = (
+        "STAGEPLAY_SCRIPT:\nPanel 1.\nROBOT: Hello.\n\n"
+        "DIAGNOSTIC_OCR_TEXT:\nHELLO.\n\n"
+        "DIAGNOSTIC_ACCESSIBILITY_DESCRIPTION:\nA robot speaks.\n"
+    )
+    result = parse_stageplay_response(text)
+    assert result.stageplay_script == "Panel 1.\nROBOT: Hello."
+    assert result.diagnostic_ocr_text == "HELLO."
+    assert result.diagnostic_accessibility_description == "A robot speaks."
+
+
+def test_parse_stageplay_response_missing_sections_raises() -> None:
+    with pytest.raises(ValueError, match="no recognized section headers"):
+        parse_stageplay_response("nonsense output")
+
+
+# ---------------------------------------------------------------------------
 # build_synthesis_prompt
 # ---------------------------------------------------------------------------
 
@@ -190,6 +218,19 @@ def test_build_synthesis_prompt_contains_all_models() -> None:
     assert "GOLD_SHORT_DESCRIPTION:" in prompt
     assert "GOLD_ACCESSIBILITY_DESCRIPTION:" in prompt
     assert "Some text" in prompt
+
+
+def test_build_stageplay_prompt_contains_cleanup_instructions() -> None:
+    variants = [
+        _make_variant("slug-a", "main", "model-alpha"),
+        _make_variant("slug-a", "main", "model-beta"),
+    ]
+    prompt = build_stageplay_prompt(variants)
+    assert "model-alpha" in prompt
+    assert "model-beta" in prompt
+    assert "STAGEPLAY_SCRIPT:" in prompt
+    assert "DIAGNOSTIC_OCR_TEXT:" in prompt
+    assert "Zach Weinersmith" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +362,36 @@ def test_load_completed_gold_pairs_reads_existing(tmp_path: Path) -> None:
         })
 
     pairs = load_completed_gold_pairs(csv_path)
+    assert ("my-slug", "main") in pairs
+
+
+def test_load_completed_stageplay_pairs_reads_existing(tmp_path: Path) -> None:
+    csv_path = tmp_path / "stageplay.csv"
+    fieldnames = list(StageplayRow.model_fields)
+    import csv as csv_mod
+
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv_mod.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow(
+            {
+                "slug": "my-slug",
+                "image_kind": "main",
+                "image_path": "p",
+                "comic_url": None,
+                "date": None,
+                "page_title": None,
+                "stageplay_script": "Panel 1.",
+                "diagnostic_ocr_text": "",
+                "diagnostic_accessibility_description": "",
+                "models_used": "m",
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "total_tokens": None,
+            }
+        )
+
+    pairs = load_completed_stageplay_pairs(csv_path)
     assert ("my-slug", "main") in pairs
 
 

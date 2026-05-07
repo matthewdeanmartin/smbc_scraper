@@ -12,7 +12,7 @@ DATA_DIR ?= data
 CACHE_DIR ?= .cache
 DOCS_FILES := README.md docs
 
-.PHONY: help sync test lint mypy ty check docs docs-build docs-serve format-md spellcheck smbc smbc-all smbc-fill-in-missing smbc-rebuild smbc-update smbc-images wiki ohnorobot ocr ocr-multi ocr-gold web-gen web-clean web-serve web-open
+.PHONY: help sync test lint mypy ty check docs docs-build docs-serve format-md spellcheck smbc smbc-all smbc-fill-in-missing smbc-rebuild smbc-update smbc-images wiki ohnorobot ocr ocr-multi ocr-gold ocr-stageplay web-gen web-clean web-serve web-open
 
 help:
 	@echo "Targets:"
@@ -37,6 +37,7 @@ help:
 	@echo "  make ocr"
 	@echo "  make ocr-multi MODELS='model1 model2'  - OCR with multiple models → variants CSV"
 	@echo "  make ocr-gold [GOLD_MODEL=...]          - Synthesise gold from variants CSV"
+	@echo "  make ocr-stageplay [STAGEPLAY_MODEL=...] - Build website-safe script text"
 	@echo "  make web-gen          - Generate the accessible static site"
 	@echo "  make web-clean        - Remove the generated static site"
 	@echo "  make web-serve        - Serve the generated site locally"
@@ -108,6 +109,10 @@ ocr-multi:
 ocr-gold:
 	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" ocr-gold $(if $(GOLD_MODEL),--model "$(GOLD_MODEL)",) $(if $(LIMIT),--limit "$(LIMIT)",) $(if $(CONCURRENCY),--concurrency "$(CONCURRENCY)",)
 
+# STAGEPLAY_MODEL="google/gemini-2.5-flash" make ocr-stageplay
+ocr-stageplay:
+	$(SCRAPER) --log-level "$(LOG_LEVEL)" --max-rate "$(MAX_RATE)" --output-dir "$(OUTPUT_DIR)" --data-dir "$(DATA_DIR)" --cache-dir "$(CACHE_DIR)" ocr-stageplay $(if $(STAGEPLAY_MODEL),--model "$(STAGEPLAY_MODEL)",) $(if $(LIMIT),--limit "$(LIMIT)",) $(if $(CONCURRENCY),--concurrency "$(CONCURRENCY)",)
+
 web-gen:
 	cd blind_smbc && $(PYTHON) python generator.py
 
@@ -115,7 +120,7 @@ web-clean:
 	powershell -Command "if (Test-Path blind_smbc/dist) { Remove-Item -Recurse -Force blind_smbc/dist }"
 
 web-serve:
-	cd blind_smbc/dist && python -m http.server 8000
+	cd blind_smbc/dist && python -m http.server 8080
 
 web-open: web-gen
-	start http://localhost:8000 && cd blind_smbc/dist && python -m http.server 8000
+	start http://localhost:8000 && cd blind_smbc/dist && python -m http.server 8080
