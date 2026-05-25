@@ -77,6 +77,7 @@ dev = ["ruff", "mypy"]
 
 [tool.uv]
 package = true
+universal = true
 
 [tool.ruff]
 line-length = 88
