@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 from loguru import logger
 from rich.progress import Progress
-from selectolax.parser import HTMLParser
+from selectolax.lexbor import LexborHTMLParser as HTMLParser
 
 from smbc_scraper.core.files import get_html_path, get_image_path
 from smbc_scraper.core.http import HttpGetClient

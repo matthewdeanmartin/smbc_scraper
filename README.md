@@ -46,3 +46,10 @@ than a CLI subcommand.
 ## Contributing
 
 Fork it, send a change, and please run the checks before opening a PR.
+
+
+## HTTPX2 migration verification (2026-10-04)
+
+Uses HTTPX2 and Hishel 1.4 HTTPX2 caching with SQLite in the existing cache directory. Old file caches are repopulated, not migrated. 53 selected tests pass on RC3 pre and 3.14, including cache-hit/response-identity and retry regression checks. Declares required Pydantic >=2 and uses supported Selectolax Lexbor parser. Stable RC3 Pydantic wheels remain blocked; external httpbin/paid vision calls not tested.
+
+Dependency locks upgraded and checked. Published dependency wheels only; no native builds or GitHub jobs. Application HTTPX2 objects remain separate from third-party HTTPX objects. Current HTTPX2 releases use the OS trust store. Experimental RC3 tests may require Pydantic prerelease wheels; stable support is reported separately. Changes local; human operators decide releases and upstream reports.

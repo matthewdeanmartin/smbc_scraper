@@ -6,8 +6,9 @@ import asyncio
 from pathlib import Path
 from typing import Optional, Protocol
 
-import httpx
-from hishel import AsyncCacheTransport, AsyncFileStorage, Controller
+import httpx2
+from hishel import AsyncSqliteStorage
+from hishel.httpx2 import AsyncCacheTransport
 from loguru import logger
 from tenacity import (
     AsyncRetrying,
@@ -37,7 +38,7 @@ class RateLimiter:
 class HttpGetClient(Protocol):
     """Protocol for collaborators that provide the GET surface used by scrapers."""
 
-    async def get(self, url: str) -> Optional[httpx.Response]: ...
+    async def get(self, url: str) -> Optional[httpx2.Response]: ...
 
 
 class HttpClient:
@@ -56,21 +57,20 @@ class HttpClient:
             stop=stop_after_attempt(3),
             wait=wait_exponential(multiplier=1, min=2, max=10),
             retry=retry_if_exception_type(
-                (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError)
+                (httpx2.TimeoutException, httpx2.ConnectError, httpx2.HTTPStatusError)
             ),
             reraise=True,
         )
 
         # Set up caching transport
         transport = AsyncCacheTransport(
-            transport=httpx.AsyncHTTPTransport(
+            next_transport=httpx2.AsyncHTTPTransport(
                 retries=0
             ),  # Retries handled by tenacity
-            controller=Controller(cacheable_methods=["GET"]),
-            storage=AsyncFileStorage(base_path=Path(cache_dir)),
+            storage=AsyncSqliteStorage(database_path=Path(cache_dir) / "http_cache.db"),
         )
 
-        self.client = httpx.AsyncClient(
+        self.client = httpx2.AsyncClient(
             transport=transport,
             headers={"User-Agent": user_agent},
         )
@@ -79,7 +79,7 @@ class HttpClient:
             f"Rate limit: {rate_limit} req/s. Cache: {cache_dir}"
         )
 
-    async def get(self, url: str) -> Optional[httpx.Response]:
+    async def get(self, url: str) -> Optional[httpx2.Response]:
         """Performs a rate-limited, retrying GET request."""
         await self.rate_limiter.wait()
 
@@ -100,13 +100,13 @@ class HttpClient:
                         response.raise_for_status()
 
                     return response
-        except httpx.HTTPError as e:
+        except httpx2.HTTPError as e:
             logger.error(f"Failed to fetch {url}: {e}")
             return None
 
         return None  # Should be unreachable
 
     async def close(self):
-        """Closes the underlying httpx client."""
+        """Closes the underlying httpx2 client."""
         await self.client.aclose()
         logger.info("HttpClient closed.")

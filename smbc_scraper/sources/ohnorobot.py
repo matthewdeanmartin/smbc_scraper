@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 import pandas as pd
 from loguru import logger
 from rich.progress import Progress
-from selectolax.parser import HTMLParser
+from selectolax.lexbor import LexborHTMLParser as HTMLParser
 
 from smbc_scraper.core.http import HttpGetClient
 from smbc_scraper.models import ComicRow

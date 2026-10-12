@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}Text diagnostics: {{ comic.slug }} ({{ comic.date }}) - SMBC for the Blind{% endblock %}
+
+{% block content %}
+<article>
+    <header>
+        <h1>Text diagnostics for {{ comic.date }}</h1>
+        <p class="comic-meta">Slug: {{ comic.slug }}</p>
+        <p class="section-link-row">
+            <a href="{{ comic_page_url }}">Back to comic script</a>
+        </p>
+    </header>
+
+    <section id="diagnostic-description" aria-labelledby="diagnostic-description-heading">
+        <h2 id="diagnostic-description-heading">Description</h2>
+        <div class="transcript-box">
+            {{ comic.diagnostic_accessibility_description if comic.diagnostic_accessibility_description else "No description available yet." }}
+        </div>
+    </section>
+
+    <section id="diagnostic-ocr" aria-labelledby="diagnostic-ocr-heading">
+        <h2 id="diagnostic-ocr-heading">OCR</h2>
+        <div class="transcript-box">
+            {{ comic.diagnostic_ocr_text if comic.diagnostic_ocr_text else "No OCR available yet." }}
+        </div>
+    </section>
+</article>
+{% endblock %}

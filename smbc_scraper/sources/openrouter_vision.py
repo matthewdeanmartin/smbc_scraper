@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-import httpx
+import httpx2
 import pandas as pd
 from loguru import logger
 from pydantic import BaseModel
@@ -310,7 +310,7 @@ class OpenRouterVisionClient:
 
         self.model = model
         self.rate_limiter = RateLimiter(rate_limit)
-        self.client = httpx.AsyncClient(
+        self.client = httpx2.AsyncClient(
             base_url="https://openrouter.ai/api/v1",
             headers=headers,
             timeout=timeout,
