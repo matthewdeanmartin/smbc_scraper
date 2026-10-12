@@ -566,8 +566,7 @@ def main():
     ocr_multi_parser = subparsers.add_parser(
         "ocr-multi",
         help=(
-            "Run OCR across multiple OpenRouter models; accumulate in one "
-            "variants CSV."
+            "Run OCR across multiple OpenRouter models; accumulate in one variants CSV."
         ),
     )
     ocr_multi_parser.add_argument(

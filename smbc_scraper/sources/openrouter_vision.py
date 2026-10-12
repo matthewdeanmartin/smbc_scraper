@@ -749,6 +749,7 @@ Rules:
 Variants:
 """
 
+
 class GoldRow(BaseModel):
     slug: str
     image_kind: str
@@ -947,9 +948,7 @@ def build_stageplay_prompt(variants: list[VisionAnalysisRow]) -> str:
         parts.append(f"<MODEL: {variant.model}>")
         parts.append(f"ocr_text: {variant.ocr_text}")
         parts.append(f"short_description: {variant.short_description}")
-        parts.append(
-            f"accessibility_description: {variant.accessibility_description}"
-        )
+        parts.append(f"accessibility_description: {variant.accessibility_description}")
         parts.append("")
     return "\n".join(parts)
 

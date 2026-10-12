@@ -11,9 +11,9 @@ from smbc_scraper.sources.openrouter_vision import (
     OpenRouterVisionClient,
     StageplayRow,
     VisionAnalysisRow,
-    build_stageplay_prompt,
     append_vision_rows,
     build_image_work_items,
+    build_stageplay_prompt,
     build_synthesis_prompt,
     encode_image_as_data_url,
     load_completed_gold_pairs,
@@ -23,7 +23,6 @@ from smbc_scraper.sources.openrouter_vision import (
     parse_stageplay_response,
     parse_vision_response,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -53,7 +52,9 @@ class DummyResponse:
         return self._payload
 
 
-def _make_variant(slug: str, image_kind: str, model: str, image_path: str = "") -> VisionAnalysisRow:
+def _make_variant(
+    slug: str, image_kind: str, model: str, image_path: str = ""
+) -> VisionAnalysisRow:
     return VisionAnalysisRow(
         slug=slug,
         image_kind=image_kind,
@@ -350,16 +351,27 @@ def test_load_completed_gold_pairs_reads_existing(tmp_path: Path) -> None:
     csv_path = tmp_path / "gold.csv"
     fieldnames = list(GoldRow.model_fields)
     import csv as csv_mod
+
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv_mod.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerow({
-            "slug": "my-slug", "image_kind": "main", "image_path": "p",
-            "comic_url": None, "date": None, "page_title": None,
-            "gold_ocr_text": "", "gold_short_description": "",
-            "gold_accessibility_description": "", "models_used": "m",
-            "prompt_tokens": None, "completion_tokens": None, "total_tokens": None,
-        })
+        writer.writerow(
+            {
+                "slug": "my-slug",
+                "image_kind": "main",
+                "image_path": "p",
+                "comic_url": None,
+                "date": None,
+                "page_title": None,
+                "gold_ocr_text": "",
+                "gold_short_description": "",
+                "gold_accessibility_description": "",
+                "models_used": "m",
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "total_tokens": None,
+            }
+        )
 
     pairs = load_completed_gold_pairs(csv_path)
     assert ("my-slug", "main") in pairs
@@ -415,10 +427,16 @@ async def test_openrouter_client_parses_section_response(
     )
 
     async def fake_post(url: str, json: dict):
-        return DummyResponse({
-            "choices": [{"message": {"content": section_response}}],
-            "usage": {"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
-        })
+        return DummyResponse(
+            {
+                "choices": [{"message": {"content": section_response}}],
+                "usage": {
+                    "prompt_tokens": 123,
+                    "completion_tokens": 45,
+                    "total_tokens": 168,
+                },
+            }
+        )
 
     monkeypatch.setattr(client.client, "post", fake_post)
     try:
@@ -445,10 +463,18 @@ async def test_openrouter_client_does_not_send_response_format(
 
     async def fake_post(url: str, json: dict):
         captured["json"] = json
-        return DummyResponse({
-            "choices": [{"message": {"content": "OCR_TEXT:\n\nSHORT_DESCRIPTION:\nX.\nACCESSIBILITY_DESCRIPTION:\nY.\n"}}],
-            "usage": {},
-        })
+        return DummyResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "OCR_TEXT:\n\nSHORT_DESCRIPTION:\nX.\nACCESSIBILITY_DESCRIPTION:\nY.\n"
+                        }
+                    }
+                ],
+                "usage": {},
+            }
+        )
 
     monkeypatch.setattr(client.client, "post", fake_post)
     try:
@@ -468,10 +494,12 @@ async def test_openrouter_client_raises_on_bad_response(
     client = OpenRouterVisionClient(api_key="test-key")
 
     async def fake_post(url: str, json: dict):
-        return DummyResponse({
-            "choices": [{"message": {"content": "this is not a valid response"}}],
-            "usage": {},
-        })
+        return DummyResponse(
+            {
+                "choices": [{"message": {"content": "this is not a valid response"}}],
+                "usage": {},
+            }
+        )
 
     monkeypatch.setattr(client.client, "post", fake_post)
     try:
@@ -515,14 +543,26 @@ async def test_multi_model_scraper_skips_completed_pairs(
     async def fake_post(url: str, json: dict):
         nonlocal call_count
         call_count += 1
-        return DummyResponse({
-            "choices": [{"message": {"content": (
-                "OCR_TEXT:\nNew text\n"
-                "SHORT_DESCRIPTION:\nNew.\n"
-                "ACCESSIBILITY_DESCRIPTION:\nNew scene.\n"
-            )}}],
-            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-        })
+        return DummyResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                "OCR_TEXT:\nNew text\n"
+                                "SHORT_DESCRIPTION:\nNew.\n"
+                                "ACCESSIBILITY_DESCRIPTION:\nNew scene.\n"
+                            )
+                        }
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            }
+        )
 
     scraper = MultiModelVisionScraper(
         api_key="test-key",

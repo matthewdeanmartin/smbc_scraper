@@ -154,9 +154,7 @@ class TestSmbcScraperParsing:
 class TestSmbcIncrementalState:
     def test_resolve_incremental_start_id_uses_saved_state(self, tmp_path: Path):
         state_path = tmp_path / "state.json"
-        save_incremental_state(
-            state_path, IncrementalScrapeState(last_scraped_id=1234)
-        )
+        save_incremental_state(state_path, IncrementalScrapeState(last_scraped_id=1234))
 
         start_id, state = resolve_incremental_start_id(state_path)
 

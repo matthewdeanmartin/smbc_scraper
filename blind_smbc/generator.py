@@ -47,9 +47,7 @@ def _load_best_main_rows(csv_path: Path, text_columns: list[str]) -> pd.DataFram
 
     rows["content_len"] = sum(rows[column].str.len() for column in text_columns)
     return (
-        rows.sort_values("content_len", ascending=False)
-        .drop_duplicates("slug")
-        .copy()
+        rows.sort_values("content_len", ascending=False).drop_duplicates("slug").copy()
     )
 
 

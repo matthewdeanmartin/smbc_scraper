@@ -45,12 +45,7 @@ class TestGetImagePath:
         """
         image_url = "https://www.smbc-comics.com/comics/20250913.png"
         expected_path = (
-            tmp_path
-            / "images"
-            / "2025"
-            / "09"
-            / "13"
-            / "2025-09-13-main.png"
+            tmp_path / "images" / "2025" / "09" / "13" / "2025-09-13-main.png"
         )
         result_path = get_image_path(tmp_path, comic_row_with_date, image_url)
         assert result_path == expected_path
@@ -64,12 +59,7 @@ class TestGetImagePath:
         """
         image_url = "https://www.smbc-comics.com/comics/20250913-after.gif"
         expected_path = (
-            tmp_path
-            / "images"
-            / "2025"
-            / "09"
-            / "13"
-            / "2025-09-13-votey.gif"
+            tmp_path / "images" / "2025" / "09" / "13" / "2025-09-13-votey.gif"
         )
         result_path = get_image_path(
             tmp_path, comic_row_with_date, image_url, is_votey=True
@@ -85,12 +75,7 @@ class TestGetImagePath:
         """
         image_url = "https://images.example.com/some-image-path/image"
         expected_path = (
-            tmp_path
-            / "images"
-            / "2025"
-            / "09"
-            / "13"
-            / "2025-09-13-main.png"
+            tmp_path / "images" / "2025" / "09" / "13" / "2025-09-13-main.png"
         )
         result_path = get_image_path(tmp_path, comic_row_with_date, image_url)
         assert result_path == expected_path
@@ -104,9 +89,7 @@ class TestGetImagePath:
         """
         image_url = "https://www.smbc-comics.com/comics/some-image.png"
         result_path = get_image_path(tmp_path, comic_row_no_date, image_url)
-        assert result_path == (
-            tmp_path / "images" / "misc" / "a-weird-slug-main.png"
-        )
+        assert result_path == (tmp_path / "images" / "misc" / "a-weird-slug-main.png")
 
 
 class TestGetHtmlPath:
@@ -118,14 +101,7 @@ class TestGetHtmlPath:
         """
         Verifies correct, date-structured path construction for an HTML file.
         """
-        expected_path = (
-            tmp_path
-            / "html"
-            / "2025"
-            / "09"
-            / "13"
-            / "2025-09-13.html"
-        )
+        expected_path = tmp_path / "html" / "2025" / "09" / "13" / "2025-09-13.html"
         result_path = get_html_path(tmp_path, comic_row_with_date)
         assert result_path == expected_path
 

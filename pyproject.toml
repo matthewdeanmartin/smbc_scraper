@@ -85,6 +85,7 @@ line-length = 88
 target-version = "py39"
 
 [tool.ruff.lint]
+ignore = ["RUF100", "E501", "C901"]  # unused noqa differs across Python versions; formatter owns line length
 select = ["E", "W", "F", "I", "C", "B"]
 
 [tool.mypy]

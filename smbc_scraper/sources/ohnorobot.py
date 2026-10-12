@@ -144,8 +144,7 @@ class OhNoRobotScraper:
         Generates search queries from existing CSV data and scrapes ohnorobot.com.
         """
         logger.info(
-            "Starting OhNoRobot scrape, "
-            f"generating queries from files in '{input_dir}'"
+            f"Starting OhNoRobot scrape, generating queries from files in '{input_dir}'"
         )
 
         smbc_csv_path = input_dir / "smbc_ground_truth.csv"
@@ -201,4 +200,3 @@ class OhNoRobotScraper:
         )
 
         return await self._run_queries(sorted(queries))
-

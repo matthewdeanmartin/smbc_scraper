@@ -19,8 +19,7 @@ def test_load_data_prefers_stageplay_and_preserves_diagnostics(tmp_path) -> None
 
     base_csv = tmp_path / "smbc_ground_truth.csv"
     base_csv.write_text(
-        "slug,date,comic_text,hover_text,votey_text\n"
-        "whoopsie,2024-01-01,,hover,\n",
+        "slug,date,comic_text,hover_text,votey_text\nwhoopsie,2024-01-01,,hover,\n",
         encoding="utf-8",
     )
 
@@ -36,8 +35,8 @@ def test_load_data_prefers_stageplay_and_preserves_diagnostics(tmp_path) -> None
         (
             "slug,image_kind,stageplay_script,diagnostic_ocr_text,"
             "diagnostic_accessibility_description\n"
-            "whoopsie,main,\"Panel 1.\nROBOT: Hello.\","
-            "\"CLEAN OCR\",\"Clean description\"\n"
+            'whoopsie,main,"Panel 1.\nROBOT: Hello.",'
+            '"CLEAN OCR","Clean description"\n'
         ),
         encoding="utf-8",
     )

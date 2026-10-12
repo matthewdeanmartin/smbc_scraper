@@ -131,9 +131,7 @@ class SmbcScraper:
         """
         existing_rows = load_comics(source_csv_path)
         # Use mutable dicts so we can update legacy_id in place.
-        row_map: dict[str, dict] = {
-            row.slug: row.model_dump() for row in existing_rows
-        }
+        row_map: dict[str, dict] = {row.slug: row.model_dump() for row in existing_rows}
 
         if not row_map:
             logger.warning("No existing rows found in CSV; nothing to rebuild.")
@@ -164,9 +162,7 @@ class SmbcScraper:
                 return i, (row.slug if row else None)
 
         with Progress() as progress:
-            task = progress.add_task(
-                "[cyan]Rebuilding ID index...", total=max_id
-            )
+            task = progress.add_task("[cyan]Rebuilding ID index...", total=max_id)
             probe_futures = [probe(i) for i in range(1, max_id + 1)]
             for f in asyncio.as_completed(probe_futures):
                 comic_id, slug = await f
@@ -567,9 +563,7 @@ class SmbcScraper:
 
         latest_legacy_id = await self.discover_latest_legacy_id()
         end_id = (
-            min(start_id + limit - 1, latest_legacy_id)
-            if limit
-            else latest_legacy_id
+            min(start_id + limit - 1, latest_legacy_id) if limit else latest_legacy_id
         )
         rows = await self.scrape_id_range(start_id, end_id)
         return rows, latest_legacy_id

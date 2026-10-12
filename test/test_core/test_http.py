@@ -53,7 +53,6 @@ class TestHttpClient:
         # Allowing for a small margin of error.
         assert duration > 0.49
 
-
     async def test_no_retry_on_4xx_client_error(self, tmp_path: Path, caplog):
         """
         Verifies that the client does NOT retry on a standard 4xx error (e.g., 404).
